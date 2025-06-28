@@ -8,10 +8,11 @@ import chopf
 from .resource import ChaosPod
 
 
+# A controller that reconciles ChaosPod's.
 chaos_ctl = chopf.controller(ChaosPod)
 
+# Also watch for Pod's that are owned by this controller.
 chaos_ctl.watch_owner(Pod)
-
 
 # Register a async predicate.
 @chaos_ctl.predicate()
@@ -23,8 +24,10 @@ async def ignore_updates(event):
 
 
 # Asynchronous reconcile function.
-@chaos_ctl.reconcile(concurrency=1)
-async def reconcile(client: chopf.Client, request: chopf.Request):
+@chaos_ctl.reconcile()
+async def reconcile(
+    client: chopf.Client, request: chopf.Request
+):
     print(f'reconcile: {request}')
 
     # Get the chaospod we're currently reconciling.
