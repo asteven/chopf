@@ -8,7 +8,7 @@ A kubernetes controller runtime for python.
 The codebase includes an [example controller](./src/chaos/examples/chaospod/) which is modeled after the
 [ChaosPod example in the golang controller-runtime](https://github.com/kubernetes-sigs/controller-runtime/tree/main/examples/crd).
 
-Generate the ChaosPod custom resource definition and it to kuberntes:
+Generate the ChaosPod custom resource definition and add it to kubernetes:
 
 ```
 uv run chopf crd --modules chopf.examples.chaospod > chaospod-crd.yaml
