@@ -22,22 +22,11 @@ async def ignore_updates(event):
     return True
 
 
-# TODO: rbac, e.g.
-# chaos.rbac(Pod, verbs='get;list;watch;create;update;patch;delete')
-# chaos.rbac(ChaosPod, verbs='get;list;watch;create;update;patch;delete')
-# chaos.rbac(ChaosPod.Status, verbs='get;update;patch')
-# // +kubebuilder:rbac:
-# groups=infrastructure.cluster.x-k8s.io,
-# resources=mailgunclusters,
-# verbs=get;list;watch;create;update;patch;delete
-#
-# // +kubebuilder:rbac:groups=infrastructure.cluster.x-k8s.io,resources=mailgunclusters/status,verbs=get;update;patch
-
-
 # Asynchronous reconcile function.
 @chaos_ctl.reconcile(concurrency=1)
 async def reconcile(client: chopf.Client, request: chopf.Request):
     print(f'reconcile: {request}')
+
     # Get the chaospod we're currently reconciling.
     chaos_pod = await client.get(request)
 
