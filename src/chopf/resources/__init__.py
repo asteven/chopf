@@ -1,8 +1,6 @@
 import dataclasses
 import yaml
 
-from . import crd
-
 from .registry import (
     CustomResourceRegistry,
 )
