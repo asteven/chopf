@@ -19,6 +19,7 @@ chaos_ctl.watch_owner(Pod)
 async def ignore_updates(event):
     match type(event):
         case event.UpdateEvent:
+            # We don't care about update events.
             return False
     return True
 
