@@ -1,0 +1,46 @@
+[project]
+name = "chopf"
+version = "0.1.0"
+description = "A Kubernetes container runtime implementation for Python."
+readme = "README.md"
+authors = [
+    { name = "Steven Armstrong", email = "steven@armstrong.cc" }
+]
+requires-python = ">= 3.13"
+dependencies = [
+    "uvicorn>=0.34.0",
+    "uvloop>=0.21.0",
+    "typer-slim>=0.15.1",
+    "anyio>=4.8.0",
+    "lightkube>=0.17.1",
+    "lightkube-models>=1.32.0.8",
+    "httpx>=0.28.1",
+    "structlog>=25.3.0",
+]
+
+[project.scripts]
+chopf = 'chopf.cli:app'
+
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "ruff>=0.12.1",
+]
+
+[tool.ruff.format]
+quote-style = "single"
+
+#[dependency-groups]
+#dev = [
+#    "ruff>=0.9.5",
+#]
+
+#[tool.hatch.metadata]
+#allow-direct-references = true
+
+#[tool.hatch.build.targets.wheel]
+#packages = ["src/chopf"]
