@@ -5,11 +5,8 @@ A kubernetes controller runtime for python.
 
 ## Example
 
-The codebase includes an example operator modeled after the
-example in the golang controller-runtime:
-
-https://github.com/kubernetes-sigs/controller-runtime/tree/main/examples/crd
-
+The codebase includes an [example controller](./src/chaos/examples/chaospod/) which is modeled after the
+[ChaosPod example in the golang controller-runtime](https://github.com/kubernetes-sigs/controller-runtime/tree/main/examples/crd).
 
 Generate the ChaosPod custom resource definition and it to kuberntes:
 
