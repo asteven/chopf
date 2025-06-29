@@ -21,7 +21,6 @@ dependencies = [
 [project.scripts]
 chopf = 'chopf.cli:app'
 
-
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
@@ -34,8 +33,5 @@ dev = [
 [tool.ruff.format]
 quote-style = "single"
 
-#[tool.hatch.metadata]
-#allow-direct-references = true
-
-#[tool.hatch.build.targets.wheel]
-#packages = ["src/chopf"]
+[tool.hatch.build.targets.wheel]
+packages = ["src/chopf"]
