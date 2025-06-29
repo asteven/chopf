@@ -10,3 +10,8 @@ wheels/
 .venv
 
 uv.lock
+
+tmp/
+examples/
+docs/
+_*
