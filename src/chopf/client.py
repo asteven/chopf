@@ -3,6 +3,11 @@ import logging
 
 import anyio
 
+from lightkube.core import resource as lkr
+from lightkube.core.exceptions import ApiError
+from .exceptions import ApiObjectNotFound
+
+
 from .controller import Request
 from .resources import get_resource
 
@@ -20,6 +25,19 @@ class Client:
         if request is not None:
             resource = request
         return get_resource(resource)
+
+    def _get_resource_name_namespace(self, request=None, *, resource=None, name=None, namespace=None):
+        if isinstance(request, Request):
+            resource = request.resource
+            name = request.name
+            namespace = request.namespace
+        elif isinstance(request, lkr.Resource):
+            resource = get_resource(type(request))
+            name = request.metadata.name
+            namespace = request.metadata.namespace
+        else:
+            resource = self._get_resource(request, resource)
+        return resource, name, namespace
 
     def get(self, request=None, *, resource=None, name=None, namespace=None):
         """Get from cache or api server."""
@@ -69,11 +87,14 @@ class AsyncClient(Client):
                 name=name,
             )
         else:
-            return await self.api_client.get(
-                resource,
-                namespace=namespace,
-                name=name,
-            )
+            try:
+                return await self.api_client.get(
+                    resource,
+                    namespace=namespace,
+                    name=name,
+                )
+            except ApiError as e:
+                raise ApiObjectNotFound(resource, name, namespace=namespace) from e
 
     async def list(self, request=None, *, resource=None, namespace=None):
         if isinstance(request, Request):
@@ -124,23 +145,19 @@ class AsyncClient(Client):
     async def patch(
         self, request=None, *, resource=None, name=None, namespace=None, obj=None
     ):
-        if isinstance(request, Request):
-            resource = request.resource
-            namespace = request.namespace
-            name = request.name
-        else:
-            resource = self._get_resource(request, resource)
+        resource, name, namespace = self._get_resource_name_namespace(
+            request, resource=resource, name=name, namespace=namespace
+        )
+        if obj is None and isinstance(request, lkr.Resource):
+            obj = request
         return await self.api_client.patch(
             resource, name=name, namespace=namespace, obj=obj
         )
 
     async def delete(self, request=None, *, resource=None, name=None, namespace=None):
-        if isinstance(request, Request):
-            resource = request.resource
-            namespace = request.namespace
-            name = request.name
-        else:
-            resource = self._get_resource(request, resource)
+        resource, name, namespace = self._get_resource_name_namespace(
+            request, resource=resource, name=name, namespace=namespace
+        )
         return await self.api_client.delete(resource, name=name, namespace=namespace)
 
 
@@ -168,11 +185,14 @@ class SyncClient(Client):
                 )
             )
         else:
-            return self.api_client.get(
-                resource,
-                namespace=namespace,
-                name=name,
-            )
+            try:
+                return self.api_client.get(
+                    resource,
+                    namespace=namespace,
+                    name=name,
+                )
+            except ApiError as e:
+                raise ApiObjectNotFound(resource, name, namespace=namespace) from e
 
     def list(self, request=None, *, resource=None, namespace=None):
         if isinstance(request, Request):
@@ -224,19 +244,15 @@ class SyncClient(Client):
     def patch(
         self, request=None, *, resource=None, name=None, namespace=None, obj=None
     ):
-        if isinstance(request, Request):
-            resource = request.resource
-            namespace = request.namespace
-            name = request.name
-        else:
-            resource = self._get_resource(request, resource)
+        resource, name, namespace = self._get_resource_name_namespace(
+            request, resource=resource, name=name, namespace=namespace
+        )
+        if obj is None and isinstance(request, lkr.Resource):
+            obj = request
         return self.api_client.patch(resource, name=name, namespace=namespace, obj=obj)
 
     def delete(self, request=None, *, resource=None, name=None, namespace=None):
-        if isinstance(request, Request):
-            resource = request.resource
-            namespace = request.namespace
-            name = request.name
-        else:
-            resource = self._get_resource(request, resource)
+        resource, name, namespace = self._get_resource_name_namespace(
+            request, resource=resource, name=name, namespace=namespace
+        )
         return self.api_client.delete(resource, name=name, namespace=namespace)
