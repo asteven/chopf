@@ -52,10 +52,11 @@ class IndexView:
 class Indexer(Store):
     def __init__(self, key_func=None, indexers=None):
         super().__init__(key_func=key_func)
-        self._indexers = {'namespace': index_by_namespace}
+        self._indexers = {}
+        self._indices = {}
+        self.add_indexers({'namespace': index_by_namespace})
         if indexers is not None:
             self.add_indexers(indexers)
-        self._indices = {}
 
     def __repr__(self):
         keys = self.keys()
@@ -118,9 +119,13 @@ class Indexer(Store):
         new_keys = set(indexers.keys())
         if not old_keys.isdisjoint(new_keys):
             raise Exception('indexer conflict: %s' % old_keys.intersection(new_keys))
-        for k, v in indexers.items():
-            self._indexers[k] = v
-
+        for name, indexer in indexers.items():
+            self._indexers[name] = indexer
+            # Ensure indicies exist, even if store is empty.
+            index = self._indices.get(name, None)
+            if index is None:
+                index = {}
+                self._indices[name] = index
         # Re-index all items in the store.
         for key, value in self._items.items():
             for name in indexers.keys():
