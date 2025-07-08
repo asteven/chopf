@@ -1,3 +1,4 @@
+from lightkube.core import resource as lkr
 from lightkube.core.exceptions import ApiError
 
 __all__ = [
@@ -5,6 +6,7 @@ __all__ = [
     'Error',
     'ObjectError',
     'ObjectNotFound',
+    'ApiObjectNotFound',
     'PermanentError',
     'Requeue',
     'StoreKeyError',
@@ -48,6 +50,29 @@ class ObjectError(Error):
 
 class ObjectNotFound(ObjectError):
     pass
+
+
+class ApiObjectNotFound(ObjectNotFound):
+    def __init__(self, resource, name, namespace=None):
+        self.resource = resource
+        self.name = name
+        self.namespace = namespace
+
+    def __repr__(self):
+        info = lkr.api_info(self.resource)
+        kind = info.resource.kind
+        api_version = info.resource.api_version
+        namespace = self.namespace
+        name = self.name
+        out = []
+        if api_version is not None and kind is not None:
+            out.append(f'{api_version}/{kind}')
+        if namespace is not None:
+            out.append(f'{namespace}/{name}')
+        else:
+            out.append(name)
+        msg = ' '.join(out)
+        return f'{self.__class__.__name__}: {msg}'
 
 
 class StoreKeyError(ObjectError):
