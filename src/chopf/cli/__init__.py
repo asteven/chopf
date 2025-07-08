@@ -1,4 +1,5 @@
 import logging
+import os
 import pathlib
 import sys
 
@@ -64,6 +65,7 @@ def run(
         ),
     ] = None,
 ) -> None:
+    sys.path.insert(0, os.getcwd())
     paths = paths or []
     modules = modules or []
     loaders.preload(
@@ -84,9 +86,14 @@ def run(
 def crd(
     ctx: typer.Context,
     modules: Annotated[List[str], typer.Option()] = None,
+    #paths: Annotated[List[pathlib.Path], typer.Argument()] = None,
 ) -> None:
+
+    sys.path.insert(0, os.getcwd())
     modules = modules or []
+    #paths = paths or []
     loaders.preload(
+        #paths=paths,
         modules=modules,
     )
 
