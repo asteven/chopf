@@ -89,6 +89,12 @@ class Controller(Task):
         #    BlockOwnerDeletion: ptr.To(false),
         #    Controller:         ptr.To(false),
         # }
+        if subject.metadata.ownerReferences is None:
+            subject.metadata.ownerReferences = []
+        if controller:
+            for existing_ref in subject.metadata.ownerReferences:
+                if existing_ref.controller:
+                    raise Exception('Allready owned by a controller: %r', existing_ref)
         ref = OwnerReference(
             apiVersion=owner.apiVersion,
             kind=owner.kind,
@@ -97,12 +103,6 @@ class Controller(Task):
             blockOwnerDeletion=block_owner_deletion,
             controller=controller,
         )
-        if subject.metadata.ownerReferences is None:
-            subject.metadata.ownerReferences = []
-        if controller:
-            for existing_ref in subject.metadata.ownerReferences:
-                if existing_ref.controller:
-                    raise Exception('Allready owned by a controller: %r', existing_ref)
         subject.metadata.ownerReferences.append(ref)
         return ref
 
@@ -157,9 +157,9 @@ class Controller(Task):
         logger.debug('started')
         while True:
             logger.debug(self.queue)
-            logger.info(self.queue)
+            #logger.info(self.queue)
             request = await self.queue.get(num)
-            logger.info('processing %r', request)
+            logger.debug('processing %r', request)
 
             try:
                 if is_async_fn(self.reconcile):
@@ -169,7 +169,7 @@ class Controller(Task):
                         self.reconcile, self.sync_client, request
                     )
             except ObjectNotFound as e:
-                log.error(e)
+                log.debug(e)
                 # If the object is not in our cache, there's no point to
                 # requeue the request. So we give up and forget about it.
                 await self.queue.forget(request)
@@ -180,23 +180,23 @@ class Controller(Task):
                 await self.queue.forget(request)
             except TemporaryError as e:
                 # Requeue this request after the requested delay.
-                logger.info('requeuing with delay %i %r', e.delay, request)
+                logger.debug('requeuing with delay %i %r', e.delay, request)
                 request.retries += 1
                 await self.queue.forget(request)
                 await self.queue.add_after(request, e.delay)
             except Requeue as e:
                 await self.queue.forget(request)
                 if e.after:
-                    logger.info('requeuing with delay %i %r', e.after, request)
+                    logger.debug('requeuing with delay %i %r', e.after, request)
                     await self.queue.add_after(request, e.after)
                 else:
-                    logger.info('requeuing %r', request)
+                    logger.debug('requeuing %r', request)
                     await self.queue.add(request)
             except Exception as e:
                 log.error(e)
                 raise e
                 # Unexpected error, log it and requeue with rate limiting.
-                logger.info('requeuing with rate limiting %r', request)
+                logger.debug('requeuing with rate limiting %r', request)
                 request.retries = await self.queue.num_requeues(request)
                 await self.queue.add_rate_limited(request)
             else:
