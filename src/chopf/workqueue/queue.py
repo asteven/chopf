@@ -113,7 +113,7 @@ class Workqueue(Task):
             item = self._queue.pop()
             self._processing[item] = None
             del self._dirty[item]
-            self._print_statistics()
+            #self._print_statistics()
             return item
 
     async def done(self, item):
