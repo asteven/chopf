@@ -235,7 +235,8 @@ class Manager:
                     tg.start_soon(self.cache)
                     await self.cache
 
-                    log.debug('started %s', self)
+                    #log.debug('started %s', self)
+                    log.info('started %s', self)
 
                     # Wait until told otherwise.
                     await self._stop.wait()
