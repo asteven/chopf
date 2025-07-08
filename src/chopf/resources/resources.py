@@ -34,10 +34,13 @@ def get_resource(resource: lkr.Resource) -> lkr.Resource:
     See: https://github.com/gtsystem/lightkube/issues/76
     """
     info = lkr.api_info(resource)
-    if resource.apiVersion in ('', None):
-        resource.apiVersion = info.resource.api_version
-    if resource.kind in ('', None):
-        resource.kind = info.resource.kind
+    try:
+        if resource.apiVersion in ('', None):
+            resource.apiVersion = info.resource.api_version
+        if resource.kind in ('', None):
+            resource.kind = info.resource.kind
+    except AttributeError as e:
+        pass
     # For custom resources which are defined with a dataclass decorator
     # our above monkey patching is overwritten.
     # So patch resources again to ensure we always use our own __repr__.
