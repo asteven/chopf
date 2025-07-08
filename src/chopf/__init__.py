@@ -21,8 +21,16 @@ informer = manager.informer
 store = manager.store
 
 
-def get_store(api_version, kind):
-    return manager.cache.get_store(api_version, kind)
+def get_store(resource):
+    return manager.cache.get_store(resource)
+
+
+def get_index(resource, index_name):
+    store = manager.cache.get_store(resource)
+    return store.get_index(
+        index_name,
+        resource=resource,
+    )
 
 
 def get_async_client():
