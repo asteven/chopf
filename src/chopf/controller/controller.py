@@ -194,7 +194,7 @@ class Controller(Task):
                     await self.queue.add(request)
             except Exception as e:
                 log.error(e)
-                raise e
+                #raise e
                 # Unexpected error, log it and requeue with rate limiting.
                 logger.debug('requeuing with rate limiting %r', request)
                 request.retries = await self.queue.num_requeues(request)
@@ -260,7 +260,8 @@ class Controller(Task):
 
                     await self.start_sources()
 
-                    log.debug('started %s', self)
+                    #log.debug('started %s', self)
+                    log.info('started %s', self)
                     # Inform any awaiters that we are ready.
                     self._running.set()
 
