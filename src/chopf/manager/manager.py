@@ -12,6 +12,8 @@ from anyio.abc import CancelScope
 from lightkube import AsyncClient as LightkubeAsyncClient
 from lightkube import Client as LightkubeSyncClient
 from lightkube.resources.core_v1 import Namespace
+from lightkube.generic_resource import async_load_in_cluster_generic_resources
+
 
 
 from ..cache import Cache, Indexer, Informer
@@ -180,9 +182,13 @@ class Manager:
         self.async_client = AsyncClient(self.async_api_client, self.cache)
         self.sync_client = SyncClient(self.sync_api_client, self.cache)
 
+        # TODO: better place to do this?
+        await async_load_in_cluster_generic_resources(self.async_api_client)
+
         try:
             async with anyio.create_task_group() as tg:
                 self._task_group = tg
+
 
                 try:
                     for builder in self._builders['store'].values():
