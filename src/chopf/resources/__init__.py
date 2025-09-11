@@ -53,7 +53,8 @@ def _resources_as_dicts(*objects):
     dicts = []
     for obj in objects:
         tmp = dataclasses.asdict(obj, dict_factory=_no_empty_value_dict)
-        dicts.append({k: tmp[k] for k in _resource_key_order if k in tmp})
+        keys = dict.fromkeys(_resource_key_order + list(tmp.keys()))
+        dicts.append({k: tmp[k] for k in keys if k in tmp})
     return dicts
 
 
