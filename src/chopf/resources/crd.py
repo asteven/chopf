@@ -115,10 +115,10 @@ def resource(
         if singular is None:
             singular = kind.lower()
         if plural is None:
-            if kind[-1] == 's':
-                plural = f'{kind.lower()}es'
+            if singular[-1] == 's':
+                plural = f'{singular}es'
             else:
-                plural = f'{kind.lower()}s'
+                plural = f'{singular}s'
 
         # Ensure class __dict__ does not contain a nested __dict__ key.
         # See https://jira.mongodb.org/browse/MOTOR-460
