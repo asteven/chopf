@@ -4,6 +4,8 @@ from lightkube.core.exceptions import ApiError
 __all__ = [
     'ApiError',
     'Error',
+    'FatalError',
+    'HttpError',
     'ObjectError',
     'ObjectNotFound',
     'ApiObjectNotFound',
@@ -11,7 +13,23 @@ __all__ = [
     'Requeue',
     'StoreKeyError',
     'TemporaryError',
+    'iterate_errors',
 ]
+
+
+def iterate_errors(exc):
+    """
+    iterate over all non-exceptiongroup parts of an exception(group)
+    """
+    if isinstance(exc, BaseExceptionGroup):
+        for e in exc.exceptions:
+            yield from iterate_errors(e)
+    else:
+        yield exc
+
+
+class FatalError(Exception):
+    """A fatal error that we can not recover from."""
 
 
 class Error(Exception):
@@ -25,6 +43,24 @@ class Error(Exception):
 
     def __repr__(self):
         return f'{self.__class__.__name__}: {self.message}'
+
+
+class HttpError(Error):
+    """An error that occured on the transport level while talking to the api.
+    """
+    def __init__(self, http_method, url, status_code, message=None):
+        self.http_method = http_method
+        self.url = url
+        self.status_code = status_code
+        self.message = message
+
+    def __str__(self):
+        if self.message:
+            return self.message
+        else:
+            return '{0} to {1} failed with status: {2}'.format(
+                self.http_method, self.url, self.status_code
+            )
 
 
 class ObjectError(Error):

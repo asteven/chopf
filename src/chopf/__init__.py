@@ -7,6 +7,7 @@ from .cache import *  # noqa: F403 public API
 from .source import *  # noqa: F403 public API
 from .controller import *  # noqa: F403 public API
 from .client import *  # noqa: F403 public API
+from .builder import *  # noqa: F403 public API
 from .manager import Manager
 
 # Singleton manager instance.
@@ -39,3 +40,4 @@ def get_async_client():
 
 def get_sync_client():
     return manager.sync_client
+

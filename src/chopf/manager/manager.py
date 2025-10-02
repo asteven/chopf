@@ -2,6 +2,7 @@ import functools
 import logging
 import platform
 import signal
+import sys
 import uuid
 
 import uvloop
@@ -16,6 +17,7 @@ from lightkube.generic_resource import async_load_in_cluster_generic_resources
 
 
 
+from .. import exceptions
 from ..cache import Cache, Indexer, Informer
 from ..controller import Controller
 from ..client import AsyncClient, SyncClient
@@ -106,6 +108,7 @@ class Manager:
     def __init__(self):
         self.namespaces = None
         self.all_namespaces = False
+        self.debug = False
         self.async_api_client = LightkubeAsyncClient()
         self.sync_api_client = LightkubeSyncClient()
         self.async_client = None
@@ -134,7 +137,8 @@ class Manager:
         namespaces = self._active_namespaces
         return f'<Manager {self.operator_id} namespaces: {namespaces}>'
 
-    def run(self, all_namespaces=False, namespaces=None):
+    def run(self, all_namespaces=False, namespaces=None, debug=False):
+        self.debug = debug
         anyio.run(
             functools.partial(
                 self,
@@ -263,19 +267,27 @@ class Manager:
                 self.namespaces = [self.async_api_client.namespace]
             self._namespace_observer = NamespaceObserver(self)
 
-        async with anyio.create_task_group() as tg:
-            self._main_task_group = tg
-            if setup_signal_handler:
-                tg.start_soon(signal_handler, tg.cancel_scope)
+        try:
+            async with anyio.create_task_group() as tg:
+                self._main_task_group = tg
+                if setup_signal_handler:
+                    tg.start_soon(signal_handler, tg.cancel_scope)
 
-            if self._namespace_observer:
-                tg.start_soon(self._namespace_observer)
-                await self._namespace_observer
+                if self._namespace_observer:
+                    tg.start_soon(self._namespace_observer)
+                    await self._namespace_observer
 
-            tg.start_soon(self.start)
+                tg.start_soon(self.start)
 
-            # Wait until told otherwise.
-            await self._exit.wait()
+                # Wait until told otherwise.
+                await self._exit.wait()
+        except* exceptions.Error as eg:
+            if self.debug:
+                raise eg
+            error_messages = []
+            for error in exceptions.iterate_errors(eg):
+                error_messages.append(str(error))
+            raise exceptions.FatalError(' '.join(error_messages)) from eg
 
         log.debug('exiting %s', self)
 

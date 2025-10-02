@@ -14,6 +14,7 @@ import typer  # noqa: E402
 
 
 from . import loaders  # noqa: E402
+from .. import exceptions
 
 
 app = typer.Typer(add_completion=False)
@@ -43,6 +44,7 @@ def main(
     elif debug:
         log_level = logging.DEBUG
     log.setLevel(log_level)
+    ctx.obj['debug'] = debug
     ctx.obj['log_level'] = log_level
     ctx.obj['log'] = log
 
@@ -65,6 +67,9 @@ def run(
         ),
     ] = None,
 ) -> None:
+    log = ctx.obj['log']
+    debug = ctx.obj['debug']
+
     sys.path.insert(0, os.getcwd())
     paths = paths or []
     modules = modules or []
@@ -74,7 +79,15 @@ def run(
     )
     from chopf import manager
 
-    manager.run(all_namespaces=all_namespaces, namespaces=namespaces)
+    try:
+        manager.run(
+            all_namespaces=all_namespaces,
+            namespaces=namespaces,
+            debug=debug,
+        )
+    except exceptions.FatalError as e:
+        print(e)
+        sys.exit(1)
 
 
 #    paths: Annotated[Optional[List[str]], typer.Argument(default_factory=list)],
