@@ -5,10 +5,12 @@ import random
 import typing
 
 import anyio
+import httpx
 
 from lightkube.core import resource as lkr
 import lightkube
 
+from ..exceptions import HttpError
 from ..tasks import Task
 from ..invocation import invoke
 from ..resources import is_same_version
@@ -226,6 +228,13 @@ class Informer(Task):
                     self.kind,
                     self.resource_version,
                 )
+        except httpx.HTTPStatusError as e:
+            raise HttpError(
+                e.request.method,
+                e.request.url,
+                e.response.status_code,
+                message=f'HTTP error while listing {self.api_version}/{self.kind}'
+            ) from e
         except TimeoutError as e:
             raise TimeoutError(
                 f'TimeoutError while listing {self.api_version}/{self.kind}'
@@ -250,6 +259,13 @@ class Informer(Task):
                     namespace=self.namespace,
                 ):
                     await self._process_event(event, obj)
+            except httpx.HTTPStatusError as e:
+                raise HttpError(
+                    e.request.method,
+                    e.request.url,
+                    e.response.status_code,
+                    message=f'HTTP error while watching {self.api_version}/{self.kind}'
+                ) from e
             except TimeoutError as e:
                 raise TimeoutError(
                     f'TimeoutError while watching {self.api_version}/{self.kind}'
