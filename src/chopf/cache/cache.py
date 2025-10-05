@@ -102,7 +102,8 @@ class Cache(Task):
             self._informers.append(informer)
             # Ensure the informer will be started.
             if not informer.is_running:
-                self._task_group.start_soon(informer)
+                if self._task_group:
+                    self._task_group.start_soon(informer)
 
     def remove_informer(self, informer):
         # Stop the informer.
