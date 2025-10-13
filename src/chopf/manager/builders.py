@@ -238,7 +238,6 @@ class InformerBuilder(Builder):
         }
         self._instance = None
         self._stream_receivers = []
-        self.on = CallbackCollector(('add', 'update', 'delete', 'error'))
 
     def __getattr__(self, key):
         # proxy to Informer instance

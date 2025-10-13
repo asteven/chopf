@@ -8,7 +8,8 @@ import uuid
 import uvloop
 import anyio
 from anyio import open_signal_receiver
-from anyio.abc import CancelScope
+from anyio import TASK_STATUS_IGNORED
+from anyio.abc import CancelScope, TaskStatus
 
 from lightkube import AsyncClient as LightkubeAsyncClient
 from lightkube import Client as LightkubeSyncClient
@@ -110,10 +111,10 @@ class Manager:
     async def start(self):
         log.debug('start %r', self)
         self._stop = anyio.Event()
-        self._main_task_group.start_soon(self._start)
+        await self._main_task_group.start(self._start)
         self.is_active = True
 
-    async def _start(self):
+    async def _start(self, task_status: TaskStatus[None] = TASK_STATUS_IGNORED):
         log.debug('starting %s', self)
         self.cache = Cache(
             self.async_api_client,
@@ -165,12 +166,6 @@ class Manager:
                             tx, rx = anyio.create_memory_object_stream()
                             tg.start_soon(stream_receiver, rx)
                             informer.add_stream(tx)
-                        # Add the event handlers that the builder collected.
-                        for event, callbacks in builder.on.items():
-                            for callback in callbacks:
-                                informer.add_event_handler(
-                                    event, callback.func, callback.args, callback.kwargs
-                                )
                         # The builder needs an instance so it can proxy to it at runtime.
                         builder._instance = informer
 
@@ -179,6 +174,7 @@ class Manager:
 
                     #log.debug('started %s', self)
                     log.info('started %s', self)
+                    task_status.started()
 
                     # Wait until told otherwise.
                     await self._stop.wait()

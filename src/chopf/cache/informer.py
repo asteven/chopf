@@ -8,6 +8,8 @@ import anyio
 import httpx
 
 from lightkube.core import resource as lkr
+from lightkube.core.client import FieldSelector, LabelSelector
+
 import lightkube
 
 from ..exceptions import HttpError
@@ -18,6 +20,17 @@ from . import CreateEvent, UpdateEvent, DeleteEvent
 
 
 log = logging.getLogger(__name__)
+
+
+def _create_event(event_name, args, kwargs):
+    match event_name:
+        case 'add':
+            event = CreateEvent(args[0])
+        case 'update':
+            event = UpdateEvent(args[0], args[1])
+        case 'delete':
+            event = DeleteEvent(args[0])
+    return event
 
 
 class EventHandlerTask(Task):
@@ -131,6 +144,8 @@ class Informer(Task):
     store: object
     resource: lkr.Resource
     namespace: str = None
+    labels: LabelSelector = None
+    fields: FieldSelector = None
     name: str = None
     resync_after: int = 10 * 60 * 60 + 60 * random.randint(
         0, 9
@@ -151,7 +166,7 @@ class Informer(Task):
         super().__init__()
         self._task_group = None  # Main taskgroup
         self._stop = anyio.Event()
-        self._event_manager = EventManager()
+        self._streams = []
 
     def __hash__(self):
         return hash((self.api_version, self.kind, self.namespace, self.name))
@@ -170,17 +185,16 @@ class Informer(Task):
         return f'<Informer {_s}>'
 
     def add_stream(self, stream):
-        self._event_manager.add_stream(stream)
+        self._streams.append(stream)
 
     def remove_stream(self, stream):
-        self._event_manager.remove_stream(stream)
+        if stream in self._streams:
+            self._streams.remove(stream)
 
     def purge_streams(self):
-        self._event_manager.purge_streams()
-
-    def add_event_handler(self, event, func, args, kwargs):
-        handler = EventHandlerTask(func, args, kwargs)
-        self._event_manager.add_handler(event, handler)
+        for stream in self._streams:
+            stream.close()
+        del self._streams[:]
 
     def add_indexers(self, indexers):
         self.store.add_indexers(indexers)
@@ -191,24 +205,32 @@ class Informer(Task):
             resource=self.resource,
         )
 
+    async def _dispatch(self, event_name, *args, **kwargs):
+        if len(self._streams) > 0:
+            event = _create_event(event_name, args, kwargs)
+
+            # Dispatch to streams.
+            for stream in self._streams:
+                self._task_group.start_soon(stream.send, event)
+
     async def _add_or_update(self, obj):
         try:
             old = self.store.get(obj)
             if not is_same_version(obj, old):
                 self.store.update(obj)
-                await self._event_manager.dispatch('update', old, obj)
+                await self._dispatch('update', old, obj)
         except KeyError:
             self.store.add(obj)
-            await self._event_manager.dispatch('add', obj)
+            await self._dispatch('add', obj)
 
     async def _delete(self, obj):
         self.store.delete(obj)
-        await self._event_manager.dispatch('delete', obj)
+        await self._dispatch('delete', obj)
 
     async def _error(self, obj):
         # TODO: probably not used/needed -> remove.
         print(f'ERROR event handler called with: {obj}')
-        self._event_manager.dispatch('error', obj)
+        await self._dispatch('error', obj)
 
     async def _list(self):
         log.debug('start listing %s/%s', self.api_version, self.kind)
@@ -331,7 +353,6 @@ class Informer(Task):
                 self._task_group = tg
 
                 try:
-                    tg.start_soon(self._event_manager)
                     tg.start_soon(self._listwatch)
 
                     await self
