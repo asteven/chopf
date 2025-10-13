@@ -23,6 +23,7 @@ from ..cache import Cache
 from ..controller import Controller
 from ..client import AsyncClient, SyncClient
 from ..tasks import Task
+from ..resources import get_resource
 
 from .builders import ControllerBuilder, InformerBuilder, StoreBuilder
 from .observer import NamespaceObserver
@@ -228,6 +229,7 @@ class Manager:
     def store(self, resource):
         """Decorator that creates and returns a store builder."""
         _builders = self._builders['store']
+        resource = get_resource(resource)
         key = resource
         builder = _builders.get(key, None)
         if builder is None:
@@ -241,6 +243,7 @@ class Manager:
     def controller(self, resource, name=None):
         """Decorator that creates and returns a controller builder."""
         _builders = self._builders['controller']
+        resource = get_resource(resource)
         if name is not None:
             key = name
         else:
@@ -258,6 +261,7 @@ class Manager:
     def informer(self, resource, namespace=None, name=None):
         """Decorator that creates and returns a informer builder."""
         _builders = self._builders['informer']
+        resource = get_resource(resource)
         if name is not None:
             key = name
         else:
