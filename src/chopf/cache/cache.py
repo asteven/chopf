@@ -5,7 +5,7 @@ import logging
 from anyio.abc import CancelScope
 
 from ..tasks import Task
-from ..resources import PartialObjectMetadata
+from ..resources import get_resource, PartialObjectMetadata
 from ..exceptions import ObjectNotFound
 from . import Informer, Indexer
 
@@ -22,7 +22,7 @@ log = logging.getLogger(__name__)
 #   - one controller for each gvk using the shared gvk store
 #
 
-ALL_NAMESPACES = ['*']
+ALL_NAMESPACES = set(['*'])
 
 
 class Cache(Task):
@@ -30,7 +30,7 @@ class Cache(Task):
         super().__init__()
         self.api_client = api_client
         self._all_namespaces = all_namespaces
-        self._namespaces = namespaces or []
+        self._namespaces = namespaces or set()
 
         self._task_group = None  # Main taskgroup
         self._stop = anyio.Event()
@@ -41,7 +41,7 @@ class Cache(Task):
 
     def __repr__(self):
         _id = id(self)
-        resources = [f'{r.apiVersion}/{r.kind}' for r in self._resources]
+        resources = {f'{r.apiVersion}/{r.kind}' for r in self._resources}
         return f'<Cache {_id} namespaces: {self.namespaces} resources: {resources}>'
 
     def is_watched_resource(self, resource, namespace):
@@ -58,7 +58,8 @@ class Cache(Task):
     async def add_namespace(self, namespace):
         log.debug('adding namespace: %s', namespace)
         if namespace not in self._namespaces:
-            self._namespaces.append(namespace)
+            self._namespaces.add(namespace)
+            #if self.is_running:
             await self.start_namespace(namespace)
 
     async def start_namespace(self, namespace):
@@ -66,14 +67,17 @@ class Cache(Task):
         for resource in self._resources:
             # Get an informer for this resource.
             informer = self.get_informer(resource, namespace=namespace)
+            print(f'start_namespace: {informer}')
             # Wait until the informer has started.
-            await informer
+            #await informer
+            print(f'start_namespace after await informer: {informer}')
 
     async def remove_namespace(self, namespace):
         log.debug('removing namespace: %s', namespace)
         if namespace in self._namespaces:
             self._namespaces.remove(namespace)
-            await self.stop_namespace(namespace)
+            if self.is_running:
+                await self.stop_namespace(namespace)
 
     async def stop_namespace(self, namespace):
         log.debug('stopping namespace: %s', namespace)
@@ -90,6 +94,7 @@ class Cache(Task):
                 pass
 
     def add_informer(self, informer):
+        print(f'add_informer: {informer}')
         try:
             # Add the informer to all revelant event sources.
             sources = self._event_sources[informer.resource]
@@ -101,6 +106,7 @@ class Cache(Task):
             # Remember the informer.
             self._informers.append(informer)
             # Ensure the informer will be started.
+            #if self.is_running:
             if not informer.is_running:
                 if self._task_group:
                     self._task_group.start_soon(informer)
@@ -136,6 +142,7 @@ class Cache(Task):
             pass
 
     def register_resource(self, resource):
+        resource = get_resource(resource)
         self._resources.add(resource)
 
     def get_store(self, resource):

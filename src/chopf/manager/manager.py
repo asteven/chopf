@@ -65,7 +65,9 @@ class Manager:
         self._exit = anyio.Event()
         self._namespace_observer = None
         self.is_active = False
-        self._active_namespaces = []
+        self._active_namespaces = set()
+        self.resources = set()
+        self._active_resources = set()
         # The unique ID of this operator, used in leader election.
         self.operator_id = '%s-%s' % (
             platform.node(),
@@ -74,8 +76,10 @@ class Manager:
 
     def __repr__(self):
         _id = id(self)
-        namespaces = self._active_namespaces
-        return f'<Manager {self.operator_id} namespaces: {namespaces}>'
+        #namespaces = self._active_namespaces
+        namespaces = self.namespaces
+        resources = {'%s/%s' % (resource.apiVersion, resource.kind) for resource in self.resources}
+        return f'<Manager {self.operator_id} namespaces: {namespaces} resources: {resources}>'
 
     def run(self, all_namespaces=False, namespaces=None, debug=False):
         self.debug = debug
@@ -91,7 +95,7 @@ class Manager:
 
     async def add_namespace(self, namespace):
         log.debug('Manager add_namespace: %s', namespace)
-        self._active_namespaces.append(namespace)
+        self._active_namespaces.add(namespace)
         if self.is_active:
             await self.cache.add_namespace(namespace)
 
@@ -99,14 +103,24 @@ class Manager:
         log.debug('Manager remove_namespace: %s', namespace)
         if namespace in self._active_namespaces:
             self._active_namespaces.remove(namespace)
-        if self.is_active:
-            await self.cache.remove_namespace(namespace)
+            if self.is_active:
+                await self.cache.remove_namespace(namespace)
+
+    async def add_resource(self, resource):
+        log.debug('Manager add_resource: %s', resource)
+        self._active_resources.add(resource)
+
+    async def remove_resource(self, resource):
+        log.debug('Manager remove_resource: %s', resource)
+        if resource in self._active_resources:
+            self._active_resources.remove(resource)
 
     def stop(self):
         log.debug('stop %r', self)
         self._stop.set()
         if self._task_group:
             self._task_group.cancel_scope.cancel()
+        self.cache = None
         self.is_active = False
 
     async def start(self):
@@ -129,9 +143,13 @@ class Manager:
         # TODO: better place to do this?
         await async_load_in_cluster_generic_resources(self.async_api_client)
 
+
         try:
             async with anyio.create_task_group() as tg:
                 self._task_group = tg
+
+                #tg.start_soon(self.cache)
+                #await self.cache
 
 
                 try:
@@ -193,14 +211,14 @@ class Manager:
     async def __call__(
         self, all_namespaces=False, namespaces=None, setup_signal_handler=False
     ):
-        log.debug('startup %s', self)
         self.all_namespaces = all_namespaces
         if not self.all_namespaces:
             if namespaces is not None:
-                self.namespaces = namespaces
+                self.namespaces = set(namespaces)
             else:
-                self.namespaces = [self.async_api_client.namespace]
+                self.namespaces = set([self.async_api_client.namespace])
             self._namespace_observer = NamespaceObserver(self)
+        log.debug('startup %s', self)
 
         try:
             async with anyio.create_task_group() as tg:
@@ -230,6 +248,7 @@ class Manager:
         """Decorator that creates and returns a store builder."""
         _builders = self._builders['store']
         resource = get_resource(resource)
+        self.resources.add(resource)
         key = resource
         builder = _builders.get(key, None)
         if builder is None:
@@ -244,6 +263,7 @@ class Manager:
         """Decorator that creates and returns a controller builder."""
         _builders = self._builders['controller']
         resource = get_resource(resource)
+        self.resources.add(resource)
         if name is not None:
             key = name
         else:
@@ -262,6 +282,7 @@ class Manager:
         """Decorator that creates and returns a informer builder."""
         _builders = self._builders['informer']
         resource = get_resource(resource)
+        self.resources.add(resource)
         if name is not None:
             key = name
         else:

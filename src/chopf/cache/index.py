@@ -132,7 +132,7 @@ class Indexer(Store):
                 self._update_single_index(name, None, value, key)
 
     def index(self, index_name):
-        """Decorator that registers an indexer function."""
+        """Decorator that registers an indexer function with the given name."""
 
         def decorator(f):
             self.add_indexers({index_name: f})

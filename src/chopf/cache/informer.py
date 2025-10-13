@@ -8,7 +8,6 @@ import anyio
 import httpx
 
 from lightkube.core import resource as lkr
-from lightkube.core.client import FieldSelector, LabelSelector
 
 import lightkube
 
@@ -33,119 +32,12 @@ def _create_event(event_name, args, kwargs):
     return event
 
 
-class EventHandlerTask(Task):
-    def __init__(self, handler, args, kwargs):
-        super().__init__()
-        self.handler = handler
-        self.args = args
-        self.kwargs = kwargs
-        buffer_size = kwargs.get('buffer_size', 0)
-        self._tx, self._rx = anyio.create_memory_object_stream(buffer_size)
-
-    def __repr__(self):
-        return f'{self.__class__.__name__} {self.handler} {self.args} {self.kwargs}'
-
-    def invoke(self, *args, **kwargs):
-        try:
-            self._tx.send_nowait((args, kwargs))
-        except anyio.WouldBlock:
-            log.warn('warning, receiver would block, ignoring event')
-
-    async def dispatch(self, *args, **kwargs):
-        await self._tx.send((args, kwargs))
-
-    async def __call__(self):
-        self._running.set()
-        async with self._rx:
-            async for args, kwargs in self._rx:
-                await invoke(self.handler, *args, **kwargs)
-
-    def stop(self):
-        self._tx.close()
-        self._rx.close()
-
-
-class EventManager:
-    def __init__(self):
-        super().__init__()
-        self._handlers = {}
-        self._streams = []
-
-    def __repr__(self):
-        _id = id(self)
-        return f'<{self.__class__.__name__} {_id} {self._handlers}>'
-
-    def add_stream(self, stream):
-        self._streams.append(stream)
-
-    def remove_stream(self, stream):
-        if stream in self._streams:
-            self._streams.remove(stream)
-
-    def purge_streams(self):
-        for stream in self._streams:
-            stream.close()
-        del self._streams[:]
-
-    def add_handler(self, event, handler):
-        handlers = self._handlers.get(event, None)
-        if handlers is None:
-            handlers = []
-            self._handlers[event] = handlers
-        handlers.append(handler)
-
-    def _create_event(self, event_name, args, kwargs):
-        match event_name:
-            case 'add':
-                event = CreateEvent(args[0])
-            case 'update':
-                event = UpdateEvent(args[0], args[1])
-            case 'delete':
-                event = DeleteEvent(args[0])
-        return event
-
-    async def dispatch(self, event_name, *args, **kwargs):
-        if len(self._streams) > 0:
-            event = self._create_event(event_name, args, kwargs)
-
-        async with anyio.create_task_group() as tg:
-            # Dispatch to streams.
-            for stream in self._streams:
-                tg.start_soon(stream.send, event)
-            # Dispatch to event handlers.
-            if event_name in self._handlers:
-                for handler in self._handlers[event_name]:
-                    handler.invoke(*args, **kwargs)
-
-    def sync_dispatch(self, event_name, *args, **kwargs):
-        if len(self._streams) > 0:
-            event = self._create_event(event_name, args, kwargs)
-            # Dispatch to streams.
-            for stream in self._streams:
-                try:
-                    stream.send_nowait(event)
-                except anyio.WouldBlock:
-                    log.warn(f'warning, receiver would block, ignoring event {event}')
-        # Dispatch to event handlers.
-        if event_name in self._handlers:
-            for handler in self._handlers[event_name]:
-                handler.invoke(*args, **kwargs)
-
-    async def __call__(self):
-        async with anyio.create_task_group() as tg:
-            for handler in itertools.chain(*self._handlers.values()):
-                tg.start_soon(handler)
-                await handler
-
-
 @dataclasses.dataclass
 class Informer(Task):
     api_client: object
     store: object
     resource: lkr.Resource
     namespace: str = None
-    labels: LabelSelector = None
-    fields: FieldSelector = None
     name: str = None
     resync_after: int = 10 * 60 * 60 + 60 * random.randint(
         0, 9
@@ -206,12 +98,14 @@ class Informer(Task):
         )
 
     async def _dispatch(self, event_name, *args, **kwargs):
+        print(f'_dispatch: {event_name} {args}')
         if len(self._streams) > 0:
             event = _create_event(event_name, args, kwargs)
 
             # Dispatch to streams.
             for stream in self._streams:
-                self._task_group.start_soon(stream.send, event)
+                #self._task_group.start_soon(stream.send, event)
+                await stream.send(event)
 
     async def _add_or_update(self, obj):
         try:
@@ -327,6 +221,7 @@ class Informer(Task):
 
     async def _process_event(self, event, obj):
         try:
+            #print(f'_process_event: {event} {obj}')
             if callable(self.transformer):
                 obj = self.transformer(obj)
             match event:
