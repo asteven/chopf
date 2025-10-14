@@ -59,18 +59,16 @@ class Cache(Task):
         log.debug('adding namespace: %s', namespace)
         if namespace not in self._namespaces:
             self._namespaces.add(namespace)
-            #if self.is_running:
-            await self.start_namespace(namespace)
+            if self.is_running:
+                await self.start_namespace(namespace)
 
     async def start_namespace(self, namespace):
         log.debug('starting namespace: %s', namespace)
         for resource in self._resources:
             # Get an informer for this resource.
             informer = self.get_informer(resource, namespace=namespace)
-            print(f'start_namespace: {informer}')
             # Wait until the informer has started.
-            #await informer
-            print(f'start_namespace after await informer: {informer}')
+            await informer
 
     async def remove_namespace(self, namespace):
         log.debug('removing namespace: %s', namespace)
@@ -107,8 +105,8 @@ class Cache(Task):
             self._informers.append(informer)
             # Ensure the informer will be started.
             #if self.is_running:
-            if not informer.is_running:
-                if self._task_group:
+            if self._task_group:
+                if not informer.is_running:
                     self._task_group.start_soon(informer)
 
     def remove_informer(self, informer):
@@ -201,6 +199,10 @@ class Cache(Task):
                 self._task_group = tg
 
                 try:
+                    for informer in self._informers:
+                        if not informer.is_running:
+                            self._task_group.start_soon(informer)
+
                     for namespace in self.namespaces:
                         await self.start_namespace(namespace)
 
