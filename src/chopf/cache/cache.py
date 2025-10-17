@@ -4,6 +4,8 @@ import logging
 
 from anyio.abc import CancelScope
 
+from lightkube.core import resource as lkr
+
 from ..tasks import Task
 from ..resources import get_resource, PartialObjectMetadata
 from ..exceptions import ObjectNotFound
@@ -25,18 +27,27 @@ log = logging.getLogger(__name__)
 ALL_NAMESPACES = set(['*'])
 
 
+def is_namespaced_resource(resource):
+    return issubclass(resource, (lkr.NamespacedResource, lkr.NamespacedSubResource))
+
+
 class Cache(Task):
-    def __init__(self, api_client, all_namespaces=False, namespaces=None):
+    #def __init__(self, api_client, all_namespaces=False,
+    #        namespaces=None, resources=None):
+    def __init__(self, api_client):
         super().__init__()
         self.api_client = api_client
-        self._all_namespaces = all_namespaces
-        self._namespaces = namespaces or set()
+        #self._all_namespaces = all_namespaces
+        self._all_namespaces = False
+        #self._namespaces = namespaces or set()
+        self._namespaces = set()
+        #self._resources = resources or set()
+        self._resources = set()
 
         self._task_group = None  # Main taskgroup
         self._stop = anyio.Event()
-        self._resources = set()
+        self._registered_resources = set()
         self._stores = {}
-        self._event_sources = {}
         self._informers = []
 
     def __repr__(self):
@@ -44,9 +55,17 @@ class Cache(Task):
         resources = {f'{r.apiVersion}/{r.kind}' for r in self._resources}
         return f'<Cache {_id} namespaces: {self.namespaces} resources: {resources}>'
 
-    def is_watched_resource(self, resource, namespace):
-        informer = self.get_informer(resource, namespace=namespace, create=False)
-        return informer is not None
+    @property
+    def resources(self):
+        return self._resources
+
+    @resources.setter
+    def resources(self, value):
+        log.debug(f'resources: {self.resources} -> {value}')
+        if value is not None:
+            removed_resources = self.resources.difference(value)
+            self._purge_stores(resources=removed_resources)
+            self._resources = value
 
     @property
     def namespaces(self):
@@ -55,96 +74,85 @@ class Cache(Task):
         else:
             return self._namespaces
 
-    async def add_namespace(self, namespace):
-        log.debug('adding namespace: %s', namespace)
-        if namespace not in self._namespaces:
-            self._namespaces.add(namespace)
-            if self.is_running:
-                await self.start_namespace(namespace)
+    @namespaces.setter
+    def namespaces(self, value):
+        if value:
+            removed_namespaces = self._namespaces.difference(value)
+            self._purge_stores(namespaces=removed_namespaces)
+            self._namespaces = value
 
-    async def start_namespace(self, namespace):
-        log.debug('starting namespace: %s', namespace)
-        for resource in self._resources:
-            # Get an informer for this resource.
-            informer = self.get_informer(resource, namespace=namespace)
-            # Wait until the informer has started.
-            await informer
+    def _purge_stores(self, namespaces=None, resources=None):
+        if resources:
+            # Clear the stores for the given resources.
+            for resource in resources:
+                store = self._stores[resource]
+                store.clear()
+        if namespaces:
+            for namespace in namespaces:
+                # Purge all namespaced objects from all stores.
+                for store in self._stores.values():
+                    try:
+                        index_by_namespace = store.get_index('namespace')
+                        for obj in index_by_namespace[namespace]:
+                            store.delete(obj)
+                    except KeyError:
+                        pass
 
-    async def remove_namespace(self, namespace):
-        log.debug('removing namespace: %s', namespace)
-        if namespace in self._namespaces:
-            self._namespaces.remove(namespace)
-            if self.is_running:
-                await self.stop_namespace(namespace)
+    def reconcile_informers(self):
+        # Remove obsolete informers.
+        current_informers = self._informers.copy()
+        for informer in current_informers:
+            if is_namespaced_resource(informer.resource):
+                if informer.namespace not in self.namespaces \
+                        or informer.resource not in self.resources:
+                    self.remove_informer(informer)
+            else:
+                if informer.resource not in self.resources:
+                    self.remove_informer(informer)
 
-    async def stop_namespace(self, namespace):
-        log.debug('stopping namespace: %s', namespace)
-        for informer in self.get_informers_by(namespace=namespace):
-            self.remove_informer(informer)
+        # Create required informers.
+        for resource in self.resources:
+            if is_namespaced_resource(resource):
+                # Ensure required namespaced informers exist.
+                for namespace in self.namespaces:
+                    informer = self.get_informer(resource, namespace=namespace)
+            else:
+                # Ensure required global informers exist.
+                informer = self.get_informer(resource)
 
-        # Purge all namespaced objects from all stores.
-        for store in self._stores.values():
-            try:
-                index_by_namespace = store.get_index('namespace')
-                for obj in index_by_namespace[namespace]:
-                    store.delete(obj)
-            except KeyError:
-                pass
+    async def reconcile(self):
+        print(f'''
+cache namespaces: {self.namespaces}
+       informers: {self._informers}
+       resources: {self.resources}
+         reg-res: {self._registered_resources}
+''')
+        # Ensure all informers are running.
+        for informer in self._informers:
+            if not informer.is_running:
+                if self._task_group:
+                    self._task_group.start_soon(informer)
+                    await informer
 
     def add_informer(self, informer):
-        print(f'add_informer: {informer}')
-        try:
-            # Add the informer to all revelant event sources.
-            sources = self._event_sources[informer.resource]
-            for source in sources:
-                source.add_informer(informer)
-        except KeyError:
-            pass
-        finally:
-            # Remember the informer.
-            self._informers.append(informer)
-            # Ensure the informer will be started.
-            #if self.is_running:
-            if self._task_group:
-                if not informer.is_running:
-                    self._task_group.start_soon(informer)
+        self._informers.append(informer)
 
     def remove_informer(self, informer):
         # Stop the informer.
         informer.stop()
-        try:
-            # Remove the informer from all event sources.
-            sources = self._event_sources[informer.resource]
-            for source in sources:
-                source.remove_informer(informer)
-        except KeyError:
-            pass
-        finally:
-            # Finally forget about the informer.
-            self._informers.remove(informer)
-
-    def add_event_source(self, source):
-        self.register_resource(source.resource)
-        try:
-            sources = self._event_sources[source.resource]
-        except KeyError:
-            sources = self._event_sources[source.resource] = []
-        finally:
-            sources.append(source)
-
-    def remove_event_source(self, source):
-        try:
-            self._event_sources[source.resource].remove(source)
-        except (KeyError, ValueError) as e:
-            log.debug('remove_event_source failed: %r', e)
-            pass
+        # Forget about the informer.
+        self._informers.remove(informer)
 
     def register_resource(self, resource):
         resource = get_resource(resource)
+        self._registered_resources.add(resource)
+        if resource not in self._resources:
+            # Should never happen.
+            raise Exception(f'resource registered from unknown source: {resource}')
         self._resources.add(resource)
 
     def get_store(self, resource):
-        self.register_resource(resource)
+        #self.register_resource(resource)
         try:
             store = self._stores[resource]
         except KeyError:
@@ -153,9 +161,10 @@ class Cache(Task):
             return store
 
     def get_informers_by(self, resource=None, namespace=None):
-        if self._all_namespaces:
+        #log.debug(f'get_informers_by: {resource} {namespace}')
+        if self._all_namespaces and is_namespaced_resource(resource):
             namespace = '*'
-        return [
+        informers = [
             informer
             for informer in self._informers
             if all(
@@ -165,9 +174,12 @@ class Cache(Task):
                 )
             )
         ]
+        #log.debug(f'get_informers_by: informers: {informers}')
+        return informers
 
     def get_informer(self, resource, namespace=None, create=True):
-        if self._all_namespaces:
+        #log.debug(f'get_informer: {resource} {namespace}')
+        if self._all_namespaces and is_namespaced_resource(resource):
             namespace = '*'
         informer = None
         try:
@@ -175,6 +187,7 @@ class Cache(Task):
                 resource=resource,
                 namespace=namespace,
             )[0]
+            log.debug(f'get_informer: informer: {informer}')
         except IndexError:
             if create:
                 informer = Informer(
@@ -194,20 +207,17 @@ class Cache(Task):
     async def __call__(self):
         log.debug('starting %r', self)
 
+        #self.reconcile_informers()
+
         try:
             async with anyio.create_task_group() as tg:
                 self._task_group = tg
 
                 try:
-                    for informer in self._informers:
-                        if not informer.is_running:
-                            self._task_group.start_soon(informer)
-
-                    for namespace in self.namespaces:
-                        await self.start_namespace(namespace)
+                    #await self.reconcile()
 
                     # We are running and all our caches are synced.
-                    log.debug('started %s', self)
+                    log.info('started %s', self)
                     # Inform any awaiters that we are ready.
                     self._running.set()
 
@@ -220,12 +230,9 @@ class Cache(Task):
 
                 finally:
                     log.debug('stopping %s', self)
-                    with CancelScope(shield=True):
-                        for namespace in self.namespaces:
-                            await self.stop_namespace(namespace)
 
         finally:
-            log.debug('stopped %s', self)
+            log.info('stopped %s', self)
 
     async def get(self, resource, namespace=None, name=None):
         """Get from cache"""

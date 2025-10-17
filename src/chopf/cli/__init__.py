@@ -112,7 +112,7 @@ def crd(
 
     from chopf import resources
 
-    crds = resources.CustomResourceRegistry.all_crds()
+    crds = resources.custom_resource_registry.all_crds()
     crds_yaml = resources.resources_to_yaml(*crds)
     print(crds_yaml)
 

@@ -39,6 +39,14 @@ class Client:
             resource = self._get_resource(request, resource)
         return resource, name, namespace
 
+    def _is_watched_resource(self, resource, namespace=None):
+        return all(
+            (
+                (resource in self.cache.resources),
+                (namespace is None or namespace in self.cache.namespaces),
+            )
+        )
+
     def get(self, request=None, *, resource=None, name=None, namespace=None):
         """Get from cache or api server."""
         raise NotImplementedError()
@@ -80,7 +88,7 @@ class AsyncClient(Client):
             name = request.name
         else:
             resource = self._get_resource(request, resource)
-        if self.cache.is_watched_resource(resource, namespace):
+        if self._is_watched_resource(resource, namespace=namespace):
             return await self.cache.get(
                 resource,
                 namespace=namespace,
@@ -102,7 +110,7 @@ class AsyncClient(Client):
             namespace = request.namespace
         else:
             resource = self._get_resource(request, resource)
-        if self.cache.is_watched_resource(resource, namespace):
+        if self._is_watched_resource(resource, namespace=namespace):
             return await self.cache.list(
                 resource,
                 namespace=namespace,
@@ -175,7 +183,7 @@ class SyncClient(Client):
             name = request.name
         else:
             resource = self._get_resource(request, resource)
-        if self.cache.is_watched_resource(resource, namespace):
+        if self._is_watched_resource(resource, namespace=namespace):
             return anyio.from_thread.run(
                 functools.partial(
                     self.cache.get,
@@ -200,7 +208,7 @@ class SyncClient(Client):
             namespace = request.namespace
         else:
             resource = self._get_resource(request, resource)
-        if self.cache.is_watched_resource(resource, namespace):
+        if self._is_watched_resource(resource, namespace=namespace):
             return anyio.from_thread.run(
                 functools.partial(
                     self.cache.list,

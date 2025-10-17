@@ -47,9 +47,17 @@ def get_schema(dc):
     elif '$defs' in schema:
         definitions = schema.pop('$defs')
     if definitions:
-        if 'ObjectMeta' in definitions:
-            # Don't need/want detailed ObjectMeta schema in crd.
-            definitions['ObjectMeta'] = {'type': 'object'}
+        #if 'ObjectMeta' in definitions:
+        #    # Don't need/want detailed ObjectMeta schema in crd.
+        #    definitions['ObjectMeta'] = {'type': 'object'}
+            #definitions['ObjectMeta'] = {
+            #    'type': 'object',
+            #    'title': 'ObjectMeta',
+            #    'properties': {
+            #        'name': {'type': 'string'},
+            #        'generateName': {'type': 'string'},
+            #    },
+            #}
         # First dereference any nested definitions.
         # This is just a performance optimisation so we only dereference
         # each models once instead of repeating that for each reference.
@@ -59,6 +67,9 @@ def get_schema(dc):
         # Then cleanup the schema into something that kubernetes agrees with.
         # TODO: is this still needed?
         _clean_schema(schema)
+
+    # We are not allowed to specify a detailed ObjectMeta in crd.
+    schema['properties']['metadata'] = {'type': 'object'}
 
     return schema
 

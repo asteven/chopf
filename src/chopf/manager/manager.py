@@ -1,4 +1,5 @@
 import functools
+import itertools
 import logging
 import platform
 import signal
@@ -14,19 +15,20 @@ from anyio.abc import CancelScope, TaskStatus
 from lightkube import AsyncClient as LightkubeAsyncClient
 from lightkube import Client as LightkubeSyncClient
 from lightkube.resources.core_v1 import Namespace
-from lightkube.generic_resource import async_load_in_cluster_generic_resources
+from lightkube.resources.apiextensions_v1 import CustomResourceDefinition
+from lightkube.generic_resource import async_load_in_cluster_generic_resources, create_resources_from_crd
+from lightkube.core.resource_registry import resource_registry, LoadResourceError
 
 
 
 from .. import exceptions
-from ..cache import Cache
+from ..cache import Cache, Indexer, Informer
 from ..controller import Controller
 from ..client import AsyncClient, SyncClient
 from ..tasks import Task
-from ..resources import get_resource
+from ..resources import get_resource, custom_resource_registry
 
 from .builders import ControllerBuilder, InformerBuilder, StoreBuilder
-from .observer import NamespaceObserver
 
 
 log = logging.getLogger(__name__)
@@ -44,35 +46,86 @@ async def signal_handler(scope: CancelScope):
             return
 
 
+class StreamReceiver(Task):
+    def __init__(self, resource, handler):
+        super().__init__()
+        self.resource = resource
+        self.handler = handler
+        self._tx, self._rx = anyio.create_memory_object_stream()
+        self._cancel_scope = None
+        self._streams = []
+
+    def __hash__(self):
+        api_version = self.resource._api_info.resource.api_version
+        kind = self.resource._api_info.resource.kind
+        return hash((api_version, kind, self.handler))
+
+    def __repr__(self):
+        return f'<StreamReceiver {self.resource.apiVersion}/{self.resource.kind} {self.handler}>'
+
+    @property
+    def stream(self):
+        stream = self._tx.clone()
+        self._streams.append(stream)
+        return stream
+
+    def stop(self):
+        if self._cancel_scope:
+            log.debug('stop %s', self)
+            self._cancel_scope.cancel()
+
+    async def __call__(self):
+        log.debug('starting %s', self)
+
+        try:
+            with CancelScope() as self._cancel_scope:
+                try:
+                    log.debug('started %s', self)
+                    self._running.set()
+                    await self.handler(self._rx)
+
+                except anyio.get_cancelled_exc_class():
+                    log.debug('canceled %s', self)
+                    raise
+
+                finally:
+                    log.debug('stopping %s', self)
+        finally:
+            log.debug('stopped %s', self)
+
+
 class Manager:
     def __init__(self):
-        self.namespaces = None
         self.all_namespaces = False
+        self.namespaces = None
+        self.resources = set()
         self.debug = False
         self.async_api_client = LightkubeAsyncClient()
         self.sync_api_client = LightkubeSyncClient()
-        self.async_client = None
-        self.sync_client = None
-        self.cache = None
-        self._builders = {
-            'controller': {},
-            'informer': {},
-            'store': {},
-        }
-        self._main_task_group = None  # Main taskgroup
-        self._task_group = None
-        self._stop = None
-        self._exit = anyio.Event()
-        self._namespace_observer = None
+        self.cache = Cache(
+            self.async_api_client,
+        )
+        self.async_client = AsyncClient(self.async_api_client, self.cache)
+        self.sync_client = SyncClient(self.sync_api_client, self.cache)
         self.is_active = False
-        self._active_namespaces = set()
-        self.resources = set()
-        self._active_resources = set()
         # The unique ID of this operator, used in leader election.
         self.operator_id = '%s-%s' % (
             platform.node(),
             str(uuid.uuid4()).replace('-', '')[:10],
         )
+        self._builders = {
+            'controller': {},
+            'informer': {},
+            'store': {},
+        }
+        self._active_namespaces = set()
+        self._active_resources = set()
+        self._controllers = {}
+        self._stream_receivers = {}
+        self._main_task_group = None  # Main taskgroup
+        self._task_group = None
+        self._stop = None
+        self._exit = anyio.Event()
 
     def __repr__(self):
         _id = id(self)
@@ -94,33 +147,85 @@ class Manager:
         )
 
     async def add_namespace(self, namespace):
-        log.debug('Manager add_namespace: %s', namespace)
-        self._active_namespaces.add(namespace)
-        if self.is_active:
-            await self.cache.add_namespace(namespace)
+        if not namespace in self._active_namespaces:
+            log.info('namespace_added: %s', namespace)
+            self._active_namespaces.add(namespace)
+            await self.reconcile()
 
     async def remove_namespace(self, namespace):
-        log.debug('Manager remove_namespace: %s', namespace)
         if namespace in self._active_namespaces:
+            log.info('namespace_removed: %s', namespace)
             self._active_namespaces.remove(namespace)
-            if self.is_active:
-                await self.cache.remove_namespace(namespace)
+            await self.reconcile()
 
-    async def add_resource(self, resource):
-        log.debug('Manager add_resource: %s', resource)
-        self._active_resources.add(resource)
+    async def add_resource(self, resource=None, version=None, kind=None):
+        if resource is None:
+            resource = resource_registry.load(version, kind)
+        if not resource in self._active_resources:
+            log.info('resource_added: %s/%s', resource.apiVersion, resource.kind)
+            self._active_resources.add(resource)
+            await self.reconcile()
 
-    async def remove_resource(self, resource):
-        log.debug('Manager remove_resource: %s', resource)
+    async def remove_resource(self, resource=None, version=None, kind=None):
+        if resource is None:
+            resource = resource_registry.load(version, kind)
         if resource in self._active_resources:
+            log.info('resource_removed: %s/%s', resource.apiVersion, resource.kind)
             self._active_resources.remove(resource)
+            await self.reconcile()
+
+    async def add_crd(self, crd: CustomResourceDefinition):
+        # Prefer explicit custom resources over lightkube's generic resources.
+        if crd in custom_resource_registry:
+            for resource in custom_resource_registry.get_resources(crd):
+                if resource in self.resources:
+                    resource_registry.register(resource)
+                    if self.is_active:
+                        # Give the API server some time to serve the new CRD
+                        # before we start hammering it.
+                        await anyio.sleep(3)
+                    await self.add_resource(resource)
+                else:
+                    await self.remove_resource(resource)
+        else:
+            create_resources_from_crd(crd)
+            group = crd.spec.group
+            kind = crd.spec.names.kind
+            for version in crd.spec.versions:
+                group_version = f'{group}/{version.name}'
+                resource = resource_registry.load(group_version, kind)
+                if resource in self.resources:
+                    await self.add_resource(resource)
+                else:
+                    await self.remove_resource(resource)
+
+        #versions = len(crd.spec.versions)
+        #print(f'{group} {kind} {versions}')
+        #version = [v for v in crd.spec.versions if v.storage][0]
+        #group_version = f'{group}/{version.name}'
+        #print(f'version: {group_version}, kind: {kind}')
+        #resource = resource_registry.get(group_version, kind)
+        #log.debug('Manager add_custom_resource: resource: %s', resource)
+
+    async def remove_crd(self, crd: CustomResourceDefinition):
+        # TODO: not finished/working
+        #log.debug('Manager remove_custom_resource: %s', crd)
+        #if custom_resource_registry.has(crd):
+        #    for resource in custom_resource_registry.get_resources(crd):
+        #        await self.remove_resource(resource)
+        #else:
+        group = crd.spec.group
+        kind = crd.spec.names.kind
+        for version in crd.spec.versions:
+            group_version = f'{group}/{version.name}'
+            resource = resource_registry.get(group_version, kind)
+            await self.remove_resource(resource)
 
     def stop(self):
         log.debug('stop %r', self)
         self._stop.set()
         if self._task_group:
             self._task_group.cancel_scope.cancel()
-        self.cache = None
         self.is_active = False
 
     async def start(self):
@@ -129,67 +234,88 @@ class Manager:
         await self._main_task_group.start(self._start)
         self.is_active = True
 
+    async def reconcile(self, startup=False):
+        log.debug(f'reconcile: is_active: {self.is_active},  startup={startup}')
+        if not self.is_active and not startup:
+            return
+
+        self.cache._all_namespaces = self.all_namespaces
+        if self.all_namespaces:
+            pass
+        else:
+            self.cache.namespaces = self._active_namespaces.copy()
+
+        self.cache.resources = self._active_resources.copy()
+
+        self.cache.reconcile_informers()
+
+        # Start or stop stream receivers and connect them to their informers.
+        for resource, stream_receivers in self._stream_receivers.items():
+            if resource in self._active_resources:
+                for stream_receiver in stream_receivers:
+                    #if not stream_receiver.is_running:
+                    self._task_group.start_soon(stream_receiver)
+                for informer in self.cache.get_informers_by(resource=resource):
+                    for stream_receiver in stream_receivers:
+                        if not informer.has_stream(key=stream_receiver):
+                            informer.add_stream(stream_receiver.stream, key=stream_receiver)
+            else:
+                for stream_receiver in stream_receivers:
+                    stream_receiver.stop()
+
+        # Start or stop controllers and connect them to their informers.
+        for resource, controller in self._controllers.items():
+            if resource in self._active_resources:
+                if not controller.is_running:
+                    self._task_group.start_soon(controller)
+                    await controller
+
+                for source in controller.event_sources:
+                    for informer in self.cache.get_informers_by(resource=source.resource):
+                        if not informer.has_stream(key=source):
+                            informer.add_stream(source.stream, key=source)
+            else:
+                controller.stop()
+
+        await self.cache.reconcile()
+
+    def add_stream_receiver(self, stream_receiver):
+        try:
+            _list = self._stream_receivers[stream_receiver.resource]
+        except KeyError:
+            _list = self._stream_receivers[stream_receiver.resource] = []
+        _list.append(stream_receiver)
+
+    async def _verify_resources(self):
+        # Ensure all resources we intend to use are actually usable,
+        # and ignore the ones which are not.
+        for resource in self.resources:
+            try:
+                resource_registry.load(resource.apiVersion, resource.kind)
+                await self.add_resource(resource)
+            except LoadResourceError as e:
+                log.warning('ignoring unusable resource: %s/%s',
+                    resource.apiVersion,
+                    resource.kind,
+                )
+                await self.remove_resource(resource)
+
     async def _start(self, task_status: TaskStatus[None] = TASK_STATUS_IGNORED):
         log.debug('starting %s', self)
-        self.cache = Cache(
-            self.async_api_client,
-            all_namespaces=self.all_namespaces,
-            namespaces=self._active_namespaces,
-        )
-
-        self.async_client = AsyncClient(self.async_api_client, self.cache)
-        self.sync_client = SyncClient(self.sync_api_client, self.cache)
-
-        # TODO: better place to do this?
-        await async_load_in_cluster_generic_resources(self.async_api_client)
-
 
         try:
             async with anyio.create_task_group() as tg:
                 self._task_group = tg
 
-                #tg.start_soon(self.cache)
-                #await self.cache
-
-
                 try:
-                    for builder in self._builders['store'].values():
-                        log.debug('creating store from builder: %r', builder)
-                        store = self.cache.get_store(builder.resource)
-                        store.add_indexers(builder._kwargs['indexers'])
-                        # The builder needs an instance so it can proxy to it at runtime.
-                        builder._instance = store
+                    # Verify resources.
+                    await self._verify_resources()
 
-                    for builder in self._builders['controller'].values():
-                        log.debug('creating controller from builder: %r', builder)
-                        controller = Controller(
-                            self.async_client,
-                            self.sync_client,
-                            self.cache,
-                            builder.resource,
-                            **builder._kwargs,
-                        )
-                        # The builder needs an instance so it can proxy to it at runtime.
-                        builder._instance = controller
-                        tg.start_soon(controller)
-                        await controller.running
-
-                    for builder in self._builders['informer'].values():
-                        log.debug('creating informer from builder: %r', builder)
-                        informer = self.cache.get_informer(
-                            builder.resource,
-                            builder.namespace,
-                        )
-                        # Connect the stream receivers that the builder collected.
-                        for stream_receiver in builder._stream_receivers:
-                            tx, rx = anyio.create_memory_object_stream()
-                            tg.start_soon(stream_receiver, rx)
-                            informer.add_stream(tx)
-                        # The builder needs an instance so it can proxy to it at runtime.
-                        builder._instance = informer
-
+                    # Start the cache.
                     tg.start_soon(self.cache)
-                    await self.cache
+
+                    # Initial reconcilation.
+                    tg.start_soon(self.reconcile, True)
 
                     #log.debug('started %s', self)
                     log.info('started %s', self)
@@ -206,7 +332,7 @@ class Manager:
                     log.debug('stopping %s', self)
 
         finally:
-            log.debug('stopped %s', self)
+            log.info('stopped %s', self)
 
     async def __call__(
         self, all_namespaces=False, namespaces=None, setup_signal_handler=False
@@ -217,8 +343,39 @@ class Manager:
                 self.namespaces = set(namespaces)
             else:
                 self.namespaces = set([self.async_api_client.namespace])
-            self._namespace_observer = NamespaceObserver(self)
+
         log.debug('startup %s', self)
+
+        # TODO: better place to do this?
+        # TODO: replace with _crd_observer
+        #await async_load_in_cluster_generic_resources(self.async_api_client)
+        #print(resource_registry._registry)
+
+        for builder in self._builders['informer'].values():
+            log.debug('creating stream receivers from informer builder: %r', builder)
+            for receiver in builder._stream_receivers:
+                stream_receiver = StreamReceiver(builder.resource, receiver)
+                self.add_stream_receiver(stream_receiver)
+
+        for builder in self._builders['store'].values():
+            log.debug('creating store from builder: %r', builder)
+            store = self.cache.get_store(builder.resource)
+            store.add_indexers(builder._kwargs['indexers'])
+            # The builder needs an instance so it can proxy to it at runtime.
+            builder._instance = store
+
+        for builder in self._builders['controller'].values():
+            log.debug('creating controller from builder: %r', builder)
+            controller = Controller(
+                self.async_client,
+                self.sync_client,
+                self.cache,
+                builder.resource,
+                **builder._kwargs,
+            )
+            # The builder needs an instance so it can proxy to it at runtime.
+            builder._instance = controller
+            self._controllers[builder.resource] = controller
 
         try:
             async with anyio.create_task_group() as tg:
@@ -226,9 +383,9 @@ class Manager:
                 if setup_signal_handler:
                     tg.start_soon(signal_handler, tg.cancel_scope)
 
-                if self._namespace_observer:
-                    tg.start_soon(self._namespace_observer)
-                    await self._namespace_observer
+                if not self.all_namespaces:
+                    await tg.start(self._namespace_observer)
+                await tg.start(self._crd_observer)
 
                 tg.start_soon(self.start)
 
@@ -244,11 +401,86 @@ class Manager:
 
         log.debug('exiting %s', self)
 
+    async def _namespace_observer(self, task_status: TaskStatus[None] = TASK_STATUS_IGNORED):
+        resource = Namespace
+        #store = self.cache.get_store(resource)
+        store = Indexer()
+        informer = Informer(
+            self.async_api_client,
+            store,
+            resource,
+        )
+        tx, rx = anyio.create_memory_object_stream()
+
+        # Add our stream to the informer.
+        informer.add_stream(tx)
+
+        async def event_stream_handler():
+            async with rx:
+                async for event in rx:
+                    match type(event):
+                        case event.CreateEvent:
+                            namespace = event.obj.metadata.name
+                            if namespace in self.namespaces:
+                                await self.add_namespace(namespace)
+                            else:
+                                await self.remove_namespace(namespace)
+                        case event.DeleteEvent:
+                            namespace = event.obj.metadata.name
+                            await self.remove_namespace(namespace)
+
+        # Start the event stream handler.
+        self._main_task_group.start_soon(event_stream_handler)
+
+        # Start the informer.
+        self._main_task_group.start_soon(informer)
+        await informer
+
+        task_status.started()
+
+    async def _crd_observer(self, task_status: TaskStatus[None] = TASK_STATUS_IGNORED):
+        resource = CustomResourceDefinition
+        #store = self.cache.get_store(resource)
+        store = Indexer()
+        informer = Informer(
+            self.async_api_client,
+            store,
+            resource,
+        )
+        tx, rx = anyio.create_memory_object_stream()
+
+        # Add our stream to the informer.
+        informer.add_stream(tx)
+
+        async def event_stream_handler():
+            async with rx:
+                async for event in rx:
+                    match type(event):
+                        case event.CreateEvent:
+                            # TODO: add existing resources and remove non-existing ones.
+                            await self.add_crd(event.obj)
+                        case event.DeleteEvent:
+                            await self.remove_crd(event.obj)
+
+        # Start the event stream handler.
+        self._main_task_group.start_soon(event_stream_handler)
+
+        # Start the informer.
+        self._main_task_group.start_soon(informer)
+        await informer
+
+        task_status.started()
+
+    def register_resource(self, resource):
+        resource = get_resource(resource)
+        self.resources.add(resource)
+
     def store(self, resource):
         """Decorator that creates and returns a store builder."""
         _builders = self._builders['store']
-        resource = get_resource(resource)
-        self.resources.add(resource)
+        self.register_resource(resource)
+        return self.cache.get_store(resource)
+
         key = resource
         builder = _builders.get(key, None)
         if builder is None:
@@ -262,8 +494,7 @@ class Manager:
     def controller(self, resource, name=None):
         """Decorator that creates and returns a controller builder."""
         _builders = self._builders['controller']
-        resource = get_resource(resource)
-        self.resources.add(resource)
+        self.register_resource(resource)
         if name is not None:
             key = name
         else:
@@ -278,17 +509,16 @@ class Manager:
             _builders[key] = builder
         return builder
 
-    def informer(self, resource, namespace=None, name=None):
+    def informer(self, resource, name=None):
         """Decorator that creates and returns a informer builder."""
         _builders = self._builders['informer']
-        resource = get_resource(resource)
-        self.resources.add(resource)
+        self.register_resource(resource)
         if name is not None:
             key = name
         else:
-            key = (resource, namespace)
+            key = resource
         builder = _builders.get(key, None)
         if builder is None:
-            builder = InformerBuilder(self, resource, namespace=namespace, name=name)
+            builder = InformerBuilder(self, resource, name=name)
             _builders[key] = builder
         return builder

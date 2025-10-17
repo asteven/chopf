@@ -39,11 +39,14 @@ class IndexView:
     def __getitem__(self, key):
         return [self.store[k] for k in self._index[key]]
 
+    def __iter__(self):
+        return iter(self.items())
+
     def keys(self):
         return self._index.keys()
 
     def items(self):
-        return {key: self[key] for key in self.keys()}
+        return [(key, self[key]) for key in self.keys()]
 
     def values(self):
         return [self[key] for key in self.keys()]
@@ -67,9 +70,6 @@ class Indexer(Store):
         self._items[key] = obj
         self._update_indices(old, obj, key)
 
-    def __getitem__(self, key):
-        return self._items[key]
-
     def __delitem__(self, key):
         if key in self._items:
             obj = self._items.pop(key)
@@ -78,36 +78,48 @@ class Indexer(Store):
     def _update_single_index(self, name, old, new, key):
         index_func = self._indexers[name]
         old_index_values = []
-        index_values = []
+        new_index_values = []
         if old:
-            old_index_values = index_func(old)
+            old_index_values = sorted(index_func(old))
         if new:
-            index_values = index_func(new)
+            new_index_values = sorted(index_func(new))
 
+#        index = self._indices.get(name, None)
+#        print(f'''_update_single_index
+#   name: {name}
+#   old: {old}
+#   new: {new}
+#   key: {key}
+#   index: {index}
+#   old_index_values: {old_index_values}
+#   new_index_values: {new_index_values}
+#''')
+
+        # Nothing changed, nothing to do.
+        if new_index_values == old_index_values:
+            return
         # We optimize for the most common case where indexFunc
         # returns a single value which has not been changed.
-        if (
-            len(index_values) == 1
-            and len(old_index_values) == 1
-            and index_values[0] == old_index_values[0]
-        ):
-            return
+        #if (
+        #    len(new_index_values) == 1
+        #    and len(old_index_values) == 1
+        #    and new_index_values[0] == old_index_values[0]
+        #):
+        #    return
 
         index = self._indices.get(name, None)
         if index is None:
-            index = {}
-            self._indices[name] = index
+            index = self._indices[name] = {}
 
         for value in old_index_values:
             _set = index.get(value, None)
             if _set:
                 _set.discard(key)
 
-        for value in index_values:
+        for value in new_index_values:
             _set = index.get(value, None)
             if _set is None:
-                _set = set()
-                index[value] = _set
+                _set = index[value] = set()
             _set.add(key)
 
     def _update_indices(self, old, new, key):

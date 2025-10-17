@@ -3,9 +3,9 @@ import dataclasses
 from dataclasses import dataclass
 from typing import dataclass_transform
 
-from lightkube import codecs
 from lightkube.core.schema import DictMixin
 from lightkube.core import resource as lkr
+from lightkube.core.resource_registry import resource_registry
 
 from lightkube.resources.apiextensions_v1 import (
     CustomResourceDefinition,
@@ -18,7 +18,7 @@ from lightkube.models.apiextensions_v1 import (
 )
 
 
-from .registry import CustomResourceRegistry
+from .registry import custom_resource_registry
 from . import Resource
 
 
@@ -62,7 +62,7 @@ def printcolumn(
     name, jsonpath, type='string', description=None, format=None, priority=None
 ):
     def _wrap(cls):
-        crd_version = CustomResourceRegistry.get_crd_version(cls)
+        crd_version = custom_resource_registry.get_crd_version(cls)
         if crd_version.additionalPrinterColumns is None:
             crd_version.additionalPrinterColumns = []
         column = CustomResourceColumnDefinition(
@@ -151,8 +151,8 @@ def resource(
         # Create and register the resource with our own registry.
         try:
             # Check if a crd already exists for this resource and reuse it.
-            crd = CustomResourceRegistry.get_crd(_Resource)
-        except CustomResourceRegistry.ResourceNotFoundError:
+            crd = custom_resource_registry.get_crd(_Resource)
+        except custom_resource_registry.ResourceNotFoundError:
             # Otherwise create a new one and register it with the registry.
             crd = CustomResourceDefinition(
                 apiVersion='apiextensions.k8s.io/v1',
@@ -171,10 +171,10 @@ def resource(
                     versions=[],
                 ),
             )
-            CustomResourceRegistry.add(crd)
+            custom_resource_registry.add(crd)
 
         # Get and configure the version.
-        crd_version = CustomResourceRegistry.get_crd_version(model)
+        crd_version = custom_resource_registry.get_crd_version(model)
         crd_version.name = version
         crd_version.served = served
         crd_version.storage = storage
@@ -218,10 +218,11 @@ def resource(
         # Register the crd, version and resource class in the registry.
         # This is later used to generate a schema which can be added
         # to kubernetes.
-        CustomResourceRegistry.register_resource(crd, crd_version, _Resource)
+        custom_resource_registry.register_resource(crd, crd_version, _Resource)
 
         # Register the resource with lightkube.
-        codecs.resource_registry.register(_Resource)
+        # TODO: removed this in favour of crd_observer in manager.
+        #resource_registry.register(_Resource)
 
         # Return the resource in place of the decorated class.
         return _Resource

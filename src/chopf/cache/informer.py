@@ -58,7 +58,7 @@ class Informer(Task):
         super().__init__()
         self._task_group = None  # Main taskgroup
         self._stop = anyio.Event()
-        self._streams = []
+        self._streams = {}
 
     def __hash__(self):
         return hash((self.api_version, self.kind, self.namespace, self.name))
@@ -76,17 +76,26 @@ class Informer(Task):
         _s = ' '.join(_out)
         return f'<Informer {_s}>'
 
-    def add_stream(self, stream):
-        self._streams.append(stream)
+    def add_stream(self, stream, key=None):
+        if key is None:
+            key = stream
+        self._streams[key] = stream
 
-    def remove_stream(self, stream):
-        if stream in self._streams:
-            self._streams.remove(stream)
+    def has_stream(self, stream=None, key=None):
+        if key is None:
+            key = stream
+        return key in self._streams
+
+    def remove_stream(self, stream=None, key=None):
+        if key is None:
+            key = stream
+        if key in self._streams:
+            del self._streams[key]
 
     def purge_streams(self):
-        for stream in self._streams:
+        for stream in self._streams.values():
             stream.close()
-        del self._streams[:]
+        self._streams.clear()
 
     def add_indexers(self, indexers):
         self.store.add_indexers(indexers)
@@ -97,15 +106,25 @@ class Informer(Task):
             resource=self.resource,
         )
 
+    async def _stream_send(self, key, event):
+        try:
+            stream = self._streams[key]
+            await stream.send(event)
+        except (anyio.ClosedResourceError, anyio.BrokenResourceError) as e:
+            #log.exception(e)
+            #log.debug(f'key: {key}, stream: {stream} ')
+            self.remove_stream(key)
+
     async def _dispatch(self, event_name, *args, **kwargs):
-        print(f'_dispatch: {event_name} {args}')
+        """Create an event and dispatch it to all our streams."""
+        #print(f'_dispatch: {event_name} {args}')
         if len(self._streams) > 0:
             event = _create_event(event_name, args, kwargs)
 
-            # Dispatch to streams.
-            for stream in self._streams:
-                #self._task_group.start_soon(stream.send, event)
-                await stream.send(event)
+            # We iterate over a list of keys because the dict may change
+            # while we're iterating over it.
+            for key in list(self._streams.keys()):
+                self._task_group.start_soon(self._stream_send, key, event)
 
     async def _add_or_update(self, obj):
         try:
@@ -238,7 +257,8 @@ class Informer(Task):
             await self._error(obj)
 
     def stop(self):
-        self._task_group.cancel_scope.cancel()
+        if self._task_group:
+            self._task_group.cancel_scope.cancel()
 
     async def __call__(self):
         log.debug('starting %s', self)
@@ -251,7 +271,7 @@ class Informer(Task):
                     tg.start_soon(self._listwatch)
 
                     await self
-                    log.debug('started %s', self)
+                    log.info('started %s', self)
 
                     # Wait until told otherwise.
                     await self._stop.wait()
@@ -265,4 +285,4 @@ class Informer(Task):
                     self.purge_streams()
 
         finally:
-            log.debug('stopped %s', self)
+            log.info('stopped %s', self)

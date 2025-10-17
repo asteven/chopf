@@ -25,8 +25,12 @@ def _resource__repr__(self):
     ident = ' '.join(out)
     return f'<Object {ident}>'
 
-
 lkr.Resource.__repr__ = _resource__repr__
+
+def _resource__str__(self):
+    return f'{self.apiVersion}/{self.kind}'
+
+lkr.Resource.__str__ = _resource__str__
 
 
 def get_resource(resource: lkr.Resource) -> lkr.Resource:
@@ -45,6 +49,7 @@ def get_resource(resource: lkr.Resource) -> lkr.Resource:
     # our above monkey patching is overwritten.
     # So patch resources again to ensure we always use our own __repr__.
     resource.__repr__ = _resource__repr__
+    resource.__str__ = _resource__str__
     return resource
 
 

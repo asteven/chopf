@@ -69,14 +69,27 @@ class Controller(Task):
         # Ensure we have a watch for the api_version/kind we are reconciling
         # if the user did not specify one explicitly.
         if self.resource not in self.watches:
-            log.debug(f'adding default watch for {self}')
-            self.add_watch(self.resource, requests_from_event_for_object)
+            self._add_event_source(self.resource, requests_from_event_for_object)
+
+        # Create event sources for all our watches.
+        for watch in self.watches.values():
+            self._add_event_source(
+                watch['resource'],
+                watch['handler'],
+                meta=watch['meta'],
+                **watch['kwargs'],
+            )
+
 
     def __repr__(self):
         if self.name is not None:
             return f'<Controller {self.name} {self.resource.apiVersion}/{self.resource.kind}>'
         else:
             return f'<Controller {self.resource.apiVersion}/{self.resource.kind}>'
+
+    @property
+    def event_sources(self):
+        return self._event_sources
 
     def set_owner_reference(
         self, owner, subject, block_owner_deletion=False, controller=False
@@ -114,19 +127,22 @@ class Controller(Task):
             controller=True,
         )
 
-    def add_watch(self, resource, handler, meta=False, **kwargs):
+    def _add_event_source(self, resource, handler, meta=False, **kwargs):
         # TODO: pass `meta` to watcher so it can set header on request like:
         #    params = {
         #        "header_params": {
         #            "Accept": "application/json;as=PartialObjectMetadataList;v=v1;g=meta.k8s.io"
         #        }
         #    }
-        self.watches[resource] = {
-            'resource': resource,
-            'handler': handler,
-            'meta': meta,
-            'kwargs': kwargs,
-        }
+        #log.debug(f'_add_event_source {resource} {handler} {kwargs}')
+        source = EventSource(
+            self.queue,
+            resource,
+            handler,
+            kwargs,
+            predicates=self.predicates,
+        )
+        self._event_sources.append(source)
 
     def get_index(self, index_name):
         store = self.cache.get_store(self.resource)
@@ -193,7 +209,7 @@ class Controller(Task):
                     logger.debug('requeuing %r', request)
                     await self.queue.add(request)
             except Exception as e:
-                log.error(e)
+                log.exception(e)
                 #raise e
                 # Unexpected error, log it and requeue with rate limiting.
                 logger.debug('requeuing with rate limiting %r', request)
@@ -221,32 +237,9 @@ class Controller(Task):
             await anyio.sleep(5)
 
     def stop(self):
-        log.debug('stop %r', self)
         if self._task_group:
+            log.debug('stop %r', self)
             self._task_group.cancel_scope.cancel()
-
-    async def start_sources(self):
-        for watch in self.watches.values():
-            source = EventSource(
-                self.queue,
-                watch['resource'],
-                watch['handler'],
-                kwargs=watch['kwargs'],
-                predicates=self.predicates,
-            )
-            self._event_sources.append(source)
-
-            # Pass the event source to the cache so it can
-            # connect it to all relevant informers.
-            self.cache.add_event_source(source)
-
-            self._task_group.start_soon(source)
-            await source
-
-    def stop_sources(self):
-        for source in self._event_sources:
-            self.cache.remove_event_source(source)
-            source.stop()
 
     async def __call__(self):
         log.debug('starting %s', self)
@@ -258,14 +251,16 @@ class Controller(Task):
                 try:
                     ##tg.start_soon(self._show_queue)
 
-                    await self.start_sources()
+                    for source in self._event_sources:
+                        tg.start_soon(source)
+                        await source
 
                     #log.debug('started %s', self)
                     log.info('started %s', self)
                     # Inform any awaiters that we are ready.
                     self._running.set()
 
-                    await self.cache
+                    #await self.cache
 
                     tg.start_soon(self.queue)
                     await self.queue
@@ -288,7 +283,5 @@ class Controller(Task):
                         with CancelScope(shield=True):
                             await tg.start(self._shutdown)
 
-                    self.stop_sources()
-
         finally:
-            log.debug('stopped %s', self)
+            log.info('stopped %s', self)

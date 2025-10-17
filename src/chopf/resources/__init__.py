@@ -2,7 +2,7 @@ import dataclasses
 import yaml
 
 from .registry import (
-    CustomResourceRegistry,
+    custom_resource_registry,
 )
 
 from .resources import (
@@ -16,6 +16,7 @@ from .resources import (
 
 __all__ = [
     'crd',
+    'custom_resource_registry',
     'GenericStruct',
     'get_resource',
     'GroupVersion',
@@ -93,4 +94,4 @@ def resources_to_yaml(*objects):
 
 def all_crds(include_private=False):
     """Create and return CustomResourceDefinition's for all known and loaded resource classes."""
-    return CustomResourceRegistry.all_crds()
+    return custom_resource_registry.all_crds()

@@ -75,6 +75,9 @@ class StoreBuilder(Builder):
         # proxy to Store instance
         return getattr(self._instance, key)
 
+    def __iter__(self):
+        return iter(self._instance)
+
     def index(self, index_name):
         """Decorator that registers an indexer function with the given name."""
 
@@ -103,14 +106,25 @@ class ControllerBuilder(Builder):
         # proxy to Controller instance
         return getattr(self._instance, key)
 
+    @property
+    def store(self):
+        return self.manager.store(self.resource)
+
+    def get_index(self, index_name):
+        store = self.manager.store(self.resource)
+        return store.get_index(
+            index_name,
+            resource=self.resource,
+        )
+
     def _add_watch(self, resource, handler, meta=False, **kwargs):
-        # TODO: create a Source (or a SourceSpec?) here instead of a dict.
         # TODO: pass `meta` to watcher so it can set header on request like:
         #    params = {
         #        "header_params": {
         #            "Accept": "application/json;as=PartialObjectMetadataList;v=v1;g=meta.k8s.io"
         #        }
         #    }
+        self.manager.register_resource(resource)
         self._kwargs['watches'][resource] = {
             'resource': resource,
             'handler': handler,
@@ -222,14 +236,12 @@ class InformerBuilder(Builder):
         self,
         manager,
         resource,
-        namespace=None,
         name=None,
         resync_after=None,
         timeout=10,
     ) -> None:
         self.manager = manager
         self.resource = resource
-        self.namespace = namespace
         self._kwargs = {
             'name': name,
             'resync_after': resync_after,
@@ -239,9 +251,20 @@ class InformerBuilder(Builder):
         self._instance = None
         self._stream_receivers = []
 
-    def __getattr__(self, key):
-        # proxy to Informer instance
-        return getattr(self._instance, key)
+    #def __getattr__(self, key):
+    #    # proxy to Informer instance
+    #    return getattr(self._instance, key)
+
+    @property
+    def store(self):
+        return self.manager.store(self.resource)
+
+    def get_index(self, index_name):
+        store = self.manager.store(self.resource)
+        return store.get_index(
+            index_name,
+            resource=self.resource,
+        )
 
     def stream(self, func=None, /):
         """Decorator that registers a stream receiver with this informer."""

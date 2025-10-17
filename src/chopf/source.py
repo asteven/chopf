@@ -30,12 +30,18 @@ class EventSource(Task):
         self._task_group = None  # Main taskgroup
         self._stop = anyio.Event()
         self._informer_streams = {}
+        self._streams = []
         self.tx, self.rx = anyio.create_memory_object_stream()
 
     def __repr__(self):
         api_version = self.resource._api_info.resource.api_version
         kind = self.resource._api_info.resource.kind
         return f'<{self.__class__.__name__} {api_version}/{kind}>'
+
+    def __hash__(self):
+        api_version = self.resource._api_info.resource.api_version
+        kind = self.resource._api_info.resource.kind
+        return hash((api_version, kind, self.handler))
 
     async def event_stream_handler(self):
         async with self.rx:
@@ -54,7 +60,7 @@ class EventSource(Task):
                         if requests:
                             for request in requests:
                                 await self.queue.add(request)
-                    except Exception:
+                    except Exception as e:
                         # TODO: proper error handling
                         log.error(f'FAILED to process {event}')
                         if hasattr(event, 'obj'):
@@ -62,22 +68,17 @@ class EventSource(Task):
                         elif hasattr(event, 'old'):
                             print(event.old)
                             print(event.new)
-                        raise
+                        raise e
+
+    @property
+    def stream(self):
+        stream = self.tx.clone()
+        self._streams.append(stream)
+        return stream
 
     def stop(self):
         if self._task_group:
             self._task_group.cancel_scope.cancel()
-
-    def add_informer(self, informer):
-        # Create a stream dedicated for the given informer.
-        stream = self.tx.clone()
-        self._informer_streams[informer] = stream
-        informer.add_stream(stream)
-
-    def remove_informer(self, informer):
-        stream = self._informer_streams.pop(informer)
-        informer.remove_stream(stream)
-        stream.close()
 
     async def __call__(self):
         log.debug('starting %s', self)
@@ -102,9 +103,9 @@ class EventSource(Task):
 
                 finally:
                     log.debug('stopping %s', self)
-                    # Remove our streams from the informers to which we added them.
-                    for informer, stream in self._informer_streams.items():
-                        informer.remove_stream(stream)
+                    # Close all the clones of our inbound stream that we
+                    # handed out.
+                    for stream in self._streams:
                         stream.close()
 
         finally:

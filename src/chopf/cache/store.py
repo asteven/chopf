@@ -37,6 +37,18 @@ class Store:
         # also support item deletion by key
         del self._items[key]
 
+    def __iter__(self):
+        #return iter(self.items())
+        return iter(self.values())
+
+    def items(self):
+        # Pythonic interface.
+        return self._items.items()
+
+    def values(self):
+        # Pythonic interface.
+        return self._items.values()
+
     def add(self, obj):
         """Add the given item to the store."""
         key = self.key_func(obj)
