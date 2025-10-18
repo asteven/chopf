@@ -1,4 +1,6 @@
 import anyio
+from anyio import TASK_STATUS_IGNORED
+from anyio.abc import TaskStatus
 
 from ..tasks import Task
 
@@ -164,9 +166,11 @@ class Workqueue(Task):
         pass
 
     def stop(self):
-        self._stop.set()
+        if self._task_group:
+            self._task_group.cancel_scope.cancel()
+        self.reset_task()
 
-    async def __call__(self):
+    async def __call__(self, task_status: TaskStatus[None] = TASK_STATUS_IGNORED):
         async with anyio.create_task_group() as tg:
             self._task_group = tg
 
@@ -175,5 +179,9 @@ class Workqueue(Task):
                 item = self._buffer.pop()
                 await self._add(item)
 
+            # Inform any awaiters that we are ready.
+            task_status.started()
             self._running.set()
+
+            # Wait until told otherwise.
             await self._stop.wait()

@@ -21,14 +21,16 @@ from lightkube.core.resource_registry import resource_registry, LoadResourceErro
 
 
 
+import chopf
 from .. import exceptions
 from ..cache import Cache, Indexer, Informer
 from ..controller import Controller
 from ..client import AsyncClient, SyncClient
 from ..tasks import Task
-from ..resources import get_resource, custom_resource_registry
+from ..resources import get_resource
 
 from .builders import ControllerBuilder, InformerBuilder, StoreBuilder
+from .observers import CrdObserver, NamespaceObserver
 
 
 log = logging.getLogger(__name__)
@@ -51,7 +53,8 @@ class StreamReceiver(Task):
         super().__init__()
         self.resource = resource
         self.handler = handler
-        self._tx, self._rx = anyio.create_memory_object_stream()
+        self._tx = None
+        self._rx = None
         self._cancel_scope = None
         self._streams = []
 
@@ -73,14 +76,17 @@ class StreamReceiver(Task):
         if self._cancel_scope:
             log.debug('stop %s', self)
             self._cancel_scope.cancel()
+        self.reset_task()
 
-    async def __call__(self):
+    async def __call__(self, task_status: TaskStatus[None] = TASK_STATUS_IGNORED):
         log.debug('starting %s', self)
 
         try:
+            self._tx, self._rx = anyio.create_memory_object_stream()
             with CancelScope() as self._cancel_scope:
                 try:
                     log.debug('started %s', self)
+                    task_status.started()
                     self._running.set()
                     await self.handler(self._rx)
 
@@ -174,53 +180,6 @@ class Manager:
             self._active_resources.remove(resource)
             await self.reconcile()
 
-    async def add_crd(self, crd: CustomResourceDefinition):
-        # Prefer explicit custom resources over lightkube's generic resources.
-        if crd in custom_resource_registry:
-            for resource in custom_resource_registry.get_resources(crd):
-                if resource in self.resources:
-                    resource_registry.register(resource)
-                    if self.is_active:
-                        # Give the API server some time to serve the new CRD
-                        # before we start hammering it.
-                        await anyio.sleep(3)
-                    await self.add_resource(resource)
-                else:
-                    await self.remove_resource(resource)
-        else:
-            create_resources_from_crd(crd)
-            group = crd.spec.group
-            kind = crd.spec.names.kind
-            for version in crd.spec.versions:
-                group_version = f'{group}/{version.name}'
-                resource = resource_registry.load(group_version, kind)
-                if resource in self.resources:
-                    await self.add_resource(resource)
-                else:
-                    await self.remove_resource(resource)
-
-        #versions = len(crd.spec.versions)
-        #print(f'{group} {kind} {versions}')
-        #version = [v for v in crd.spec.versions if v.storage][0]
-        #group_version = f'{group}/{version.name}'
-        #print(f'version: {group_version}, kind: {kind}')
-        #resource = resource_registry.get(group_version, kind)
-        #log.debug('Manager add_custom_resource: resource: %s', resource)
-
-    async def remove_crd(self, crd: CustomResourceDefinition):
-        # TODO: not finished/working
-        #log.debug('Manager remove_custom_resource: %s', crd)
-        #if custom_resource_registry.has(crd):
-        #    for resource in custom_resource_registry.get_resources(crd):
-        #        await self.remove_resource(resource)
-        #else:
-        group = crd.spec.group
-        kind = crd.spec.names.kind
-        for version in crd.spec.versions:
-            group_version = f'{group}/{version.name}'
-            resource = resource_registry.get(group_version, kind)
-            await self.remove_resource(resource)
-
     def stop(self):
         log.debug('stop %r', self)
         self._stop.set()
@@ -234,18 +193,18 @@ class Manager:
         await self._main_task_group.start(self._start)
         self.is_active = True
 
+    def configure_cache(self):
+        self.cache._all_namespaces = self.all_namespaces
+        if not self.all_namespaces:
+            self.cache.namespaces = self._active_namespaces.copy()
+        self.cache.resources = self._active_resources.copy()
+
     async def reconcile(self, startup=False):
         log.debug(f'reconcile: is_active: {self.is_active},  startup={startup}')
         if not self.is_active and not startup:
             return
 
-        self.cache._all_namespaces = self.all_namespaces
-        if self.all_namespaces:
-            pass
-        else:
-            self.cache.namespaces = self._active_namespaces.copy()
-
-        self.cache.resources = self._active_resources.copy()
+        self.configure_cache()
 
         self.cache.reconcile_informers()
 
@@ -253,8 +212,8 @@ class Manager:
         for resource, stream_receivers in self._stream_receivers.items():
             if resource in self._active_resources:
                 for stream_receiver in stream_receivers:
-                    #if not stream_receiver.is_running:
-                    self._task_group.start_soon(stream_receiver)
+                    if not stream_receiver.is_running:
+                        await self._task_group.start(stream_receiver)
                 for informer in self.cache.get_informers_by(resource=resource):
                     for stream_receiver in stream_receivers:
                         if not informer.has_stream(key=stream_receiver):
@@ -267,8 +226,7 @@ class Manager:
         for resource, controller in self._controllers.items():
             if resource in self._active_resources:
                 if not controller.is_running:
-                    self._task_group.start_soon(controller)
-                    await controller
+                    await self._task_group.start(controller)
 
                 for source in controller.event_sources:
                     for informer in self.cache.get_informers_by(resource=source.resource):
@@ -310,6 +268,9 @@ class Manager:
                 try:
                     # Verify resources.
                     await self._verify_resources()
+
+                    # Initial cache config.
+                    self.configure_cache()
 
                     # Start the cache.
                     tg.start_soon(self.cache)
@@ -384,8 +345,14 @@ class Manager:
                     tg.start_soon(signal_handler, tg.cancel_scope)
 
                 if not self.all_namespaces:
-                    await tg.start(self._namespace_observer)
-                await tg.start(self._crd_observer)
+                    await tg.start(self._start_observer,
+                        Namespace,
+                        NamespaceObserver,
+                    )
+                await tg.start(self._start_observer,
+                    CustomResourceDefinition,
+                    CrdObserver,
+                )
 
                 tg.start_soon(self.start)
 
@@ -401,8 +368,7 @@ class Manager:
 
         log.debug('exiting %s', self)
 
-    async def _namespace_observer(self, task_status: TaskStatus[None] = TASK_STATUS_IGNORED):
-        resource = Namespace
+    async def _start_observer(self, resource, observer, task_status: TaskStatus[None] = TASK_STATUS_IGNORED):
         #store = self.cache.get_store(resource)
         store = Indexer()
         informer = Informer(
@@ -410,64 +376,30 @@ class Manager:
             store,
             resource,
         )
-        tx, rx = anyio.create_memory_object_stream()
-
-        # Add our stream to the informer.
-        informer.add_stream(tx)
-
-        async def event_stream_handler():
-            async with rx:
-                async for event in rx:
-                    match type(event):
-                        case event.CreateEvent:
-                            namespace = event.obj.metadata.name
-                            if namespace in self.namespaces:
-                                await self.add_namespace(namespace)
-                            else:
-                                await self.remove_namespace(namespace)
-                        case event.DeleteEvent:
-                            namespace = event.obj.metadata.name
-                            await self.remove_namespace(namespace)
-
-        # Start the event stream handler.
-        self._main_task_group.start_soon(event_stream_handler)
-
-        # Start the informer.
-        self._main_task_group.start_soon(informer)
-        await informer
-
-        task_status.started()
-
-    async def _crd_observer(self, task_status: TaskStatus[None] = TASK_STATUS_IGNORED):
-        resource = CustomResourceDefinition
-        #store = self.cache.get_store(resource)
-        store = Indexer()
-        informer = Informer(
-            self.async_api_client,
-            store,
+        controller = observer(
+            self,
+            self.async_client,
+            self.sync_client,
+            self.cache,
             resource,
         )
-        tx, rx = anyio.create_memory_object_stream()
 
-        # Add our stream to the informer.
-        informer.add_stream(tx)
+        # Start the controller.
+        self._main_task_group.start_soon(controller)
+        await controller
 
-        async def event_stream_handler():
-            async with rx:
-                async for event in rx:
-                    match type(event):
-                        case event.CreateEvent:
-                            # TODO: add existing resources and remove non-existing ones.
-                            await self.add_crd(event.obj)
-                        case event.DeleteEvent:
-                            await self.remove_crd(event.obj)
-
-        # Start the event stream handler.
-        self._main_task_group.start_soon(event_stream_handler)
+        # Connect the controllers sources to the informer.
+        for source in controller.event_sources:
+            if not informer.has_stream(key=source):
+                informer.add_stream(source.stream, key=source)
 
         # Start the informer.
         self._main_task_group.start_soon(informer)
         await informer
+
+        ## Wait until all initial requests are processed.
+        while len(controller.queue) > 0:
+            await anyio.sleep(1)
 
         task_status.started()
 

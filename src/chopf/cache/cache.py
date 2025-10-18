@@ -2,8 +2,8 @@ import anyio
 import copy
 import logging
 
-from anyio.abc import CancelScope
-
+from anyio import TASK_STATUS_IGNORED
+from anyio.abc import TaskStatus
 from lightkube.core import resource as lkr
 
 from ..tasks import Task
@@ -131,8 +131,7 @@ cache namespaces: {self.namespaces}
         for informer in self._informers:
             if not informer.is_running:
                 if self._task_group:
-                    self._task_group.start_soon(informer)
-                    await informer
+                    await self._task_group.start(informer)
 
     def add_informer(self, informer):
         self._informers.append(informer)
@@ -204,22 +203,18 @@ cache namespaces: {self.namespaces}
         if self._task_group:
             self._task_group.cancel_scope.cancel()
 
-    async def __call__(self):
+    async def __call__(self, task_status: TaskStatus[None] = TASK_STATUS_IGNORED):
         log.debug('starting %r', self)
-
-        #self.reconcile_informers()
 
         try:
             async with anyio.create_task_group() as tg:
                 self._task_group = tg
 
                 try:
-                    #await self.reconcile()
-
-                    # We are running and all our caches are synced.
                     log.info('started %s', self)
                     # Inform any awaiters that we are ready.
                     self._running.set()
+                    task_status.started()
 
                     # Wait until told otherwise.
                     await self._stop.wait()

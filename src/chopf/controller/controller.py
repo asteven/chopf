@@ -35,7 +35,6 @@ class ReconcilerLoggerAdapter(logging.LoggerAdapter):
         return '%s: %s' % (reconciler, msg), kwargs
 
 
-@dataclasses.dataclass
 class Controller(Task):
     async_client: object
     sync_client: object
@@ -57,8 +56,26 @@ class Controller(Task):
     def kind(self) -> str:
         return self.resource._api_info.resource.kind
 
-    def __post_init__(self):
+    def __init__(self, async_client, sync_client, cache, resource,
+        name=None,
+        predicates=None, watches=None,
+        reconcile=None, startup=None, shutdown=None,
+        concurrent_reconciles=1):
         super().__init__()
+        self.async_client = async_client
+        self.sync_client = sync_client
+        self.cache = cache
+        self.resource = resource
+        self.predicates = predicates or []
+        self.watches = watches or {}
+        if reconcile:
+            self.reconcile = reconcile
+        if startup:
+            self.startup = startup
+        if shutdown:
+            self.shutdown = shutdown
+        self.concurrent_reconciles = concurrent_reconciles
+
         self._task_group = None  # Main taskgroup
         self._stop = anyio.Event()
         self.resource = get_resource(self.resource)
@@ -240,8 +257,9 @@ class Controller(Task):
         if self._task_group:
             log.debug('stop %r', self)
             self._task_group.cancel_scope.cancel()
+        self.reset_task()
 
-    async def __call__(self):
+    async def __call__(self, task_status: TaskStatus[None] = TASK_STATUS_IGNORED):
         log.debug('starting %s', self)
 
         try:
@@ -252,18 +270,15 @@ class Controller(Task):
                     ##tg.start_soon(self._show_queue)
 
                     for source in self._event_sources:
-                        tg.start_soon(source)
-                        await source
+                        await tg.start(source)
 
                     #log.debug('started %s', self)
                     log.info('started %s', self)
                     # Inform any awaiters that we are ready.
+                    task_status.started()
                     self._running.set()
 
-                    #await self.cache
-
-                    tg.start_soon(self.queue)
-                    await self.queue
+                    await tg.start(self.queue)
 
                     if self.startup is not None:
                         await tg.start(self._startup)

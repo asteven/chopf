@@ -5,6 +5,8 @@ import random
 import typing
 
 import anyio
+from anyio import TASK_STATUS_IGNORED
+from anyio.abc import TaskStatus
 import httpx
 
 from lightkube.core import resource as lkr
@@ -124,7 +126,7 @@ class Informer(Task):
             # We iterate over a list of keys because the dict may change
             # while we're iterating over it.
             for key in list(self._streams.keys()):
-                self._task_group.start_soon(self._stream_send, key, event)
+                await self._stream_send(key, event)
 
     async def _add_or_update(self, obj):
         try:
@@ -163,13 +165,6 @@ class Informer(Task):
                     self.kind,
                     self.resource_version,
                 )
-        except httpx.HTTPStatusError as e:
-            raise HttpError(
-                e.request.method,
-                e.request.url,
-                e.response.status_code,
-                message=f'HTTP error while listing {self.api_version}/{self.kind}'
-            ) from e
         except TimeoutError as e:
             raise TimeoutError(
                 f'TimeoutError while listing {self.api_version}/{self.kind}'
@@ -194,13 +189,6 @@ class Informer(Task):
                     namespace=self.namespace,
                 ):
                     await self._process_event(event, obj)
-            except httpx.HTTPStatusError as e:
-                raise HttpError(
-                    e.request.method,
-                    e.request.url,
-                    e.response.status_code,
-                    message=f'HTTP error while watching {self.api_version}/{self.kind}'
-                ) from e
             except TimeoutError as e:
                 raise TimeoutError(
                     f'TimeoutError while watching {self.api_version}/{self.kind}'
@@ -232,11 +220,25 @@ class Informer(Task):
 
             except TimeoutError as e:
                 # TODO: how do we deal with this? exponential backoff?
-                log.error('Informer._listwatch timeout error')
+                log.error(f'TimeoutError while listing/watching {self.api_version}/{self.kind}')
                 log.error(e)
             except lightkube.ApiError as e:
-                log.error('Informer._listwatch ApiError')
+                log.error(f'ApiError while listing/watching {self.api_version}/{self.kind}')
                 log.error(e)
+                await anyio.sleep(3)
+                #print(e.status)
+                #print(e.request)
+                #print(e.response)
+            except httpx.HTTPStatusError as e:
+                log.error(f'HTTP error while listing/watching {self.api_version}/{self.kind}')
+                log.error(e)
+                await anyio.sleep(3)
+                #raise HttpError(
+                #    e.request.method,
+                #    e.request.url,
+                #    e.response.status_code,
+                #    message=f'HTTP error while listing/watching {self.api_version}/{self.kind}'
+                #) from e
 
     async def _process_event(self, event, obj):
         try:
@@ -259,8 +261,9 @@ class Informer(Task):
     def stop(self):
         if self._task_group:
             self._task_group.cancel_scope.cancel()
+        self.reset_task()
 
-    async def __call__(self):
+    async def __call__(self, task_status: TaskStatus[None] = TASK_STATUS_IGNORED):
         log.debug('starting %s', self)
 
         try:
@@ -272,6 +275,9 @@ class Informer(Task):
 
                     await self
                     log.info('started %s', self)
+                    # Inform any awaiters that we are ready.
+                    task_status.started()
+                    self._running.set()
 
                     # Wait until told otherwise.
                     await self._stop.wait()

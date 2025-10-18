@@ -3,6 +3,8 @@ import logging
 import typing
 
 import anyio
+from anyio import TASK_STATUS_IGNORED
+from anyio.abc import TaskStatus
 
 from lightkube.core import resource as lkr
 
@@ -31,7 +33,8 @@ class EventSource(Task):
         self._stop = anyio.Event()
         self._informer_streams = {}
         self._streams = []
-        self.tx, self.rx = anyio.create_memory_object_stream()
+        self._tx = None
+        self._rx = None
 
     def __repr__(self):
         api_version = self.resource._api_info.resource.api_version
@@ -79,19 +82,21 @@ class EventSource(Task):
     def stop(self):
         if self._task_group:
             self._task_group.cancel_scope.cancel()
+        self.reset_task()
 
-    async def __call__(self):
+    async def __call__(self, task_status: TaskStatus[None] = TASK_STATUS_IGNORED):
         log.debug('starting %s', self)
 
         try:
+            self.tx, self.rx = anyio.create_memory_object_stream()
             async with anyio.create_task_group() as tg:
                 self._task_group = tg
-
                 try:
                     tg.start_soon(self.event_stream_handler)
 
                     log.debug('started %s', self)
                     # Inform any awaiters that we are ready.
+                    task_status.started()
                     self._running.set()
 
                     # Wait until told otherwise.
