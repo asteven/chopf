@@ -100,9 +100,9 @@ class Controller(Task):
 
     def __repr__(self):
         if self.name is not None:
-            return f'<Controller {self.name} {self.resource.apiVersion}/{self.resource.kind}>'
+            return f'<{self.__class__.__name__} {self.name} {self.resource.apiVersion}/{self.resource.kind}>'
         else:
-            return f'<Controller {self.resource.apiVersion}/{self.resource.kind}>'
+            return f'<{self.__class__.__name__} {self.resource.apiVersion}/{self.resource.kind}>'
 
     @property
     def event_sources(self):
