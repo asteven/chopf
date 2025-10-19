@@ -12,7 +12,7 @@ from ...resources import custom_resource_registry
 class CrdController(Controller):
     def __init__(self, manager, *args, **kwargs):
         self.manager = manager
-        super().__init__(*args, **kwargs)
+        super().__init__(*args, CustomResourceDefinition, **kwargs)
 
     async def reconcile(self,
         client: chopf.Client, request: chopf.Request

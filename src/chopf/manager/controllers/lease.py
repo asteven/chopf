@@ -13,7 +13,7 @@ from ...controller import Controller
 class LeaseController(Controller):
     def __init__(self, manager, *args, **kwargs):
         self.manager = manager
-        super().__init__(*args, **kwargs)
+        super().__init__(*args, Lease, **kwargs)
 
     async def startup(self, client: chopf.Client):
         print('lease controller start')

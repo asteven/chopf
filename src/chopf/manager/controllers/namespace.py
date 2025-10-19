@@ -10,7 +10,7 @@ from ...controller import Controller
 class NamespaceController(Controller):
     def __init__(self, manager, *args, **kwargs):
         self.manager = manager
-        super().__init__(*args, **kwargs)
+        super().__init__(*args, Namespace, **kwargs)
 
     async def reconcile(self,
         client: chopf.Client, request: chopf.Request

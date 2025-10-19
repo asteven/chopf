@@ -14,11 +14,12 @@ from anyio.abc import CancelScope, TaskStatus
 
 from lightkube import AsyncClient as LightkubeAsyncClient
 from lightkube import Client as LightkubeSyncClient
-from lightkube.resources.core_v1 import Namespace
-from lightkube.resources.apiextensions_v1 import CustomResourceDefinition
 from lightkube.generic_resource import async_load_in_cluster_generic_resources, create_resources_from_crd
 from lightkube.core.resource_registry import resource_registry, LoadResourceError
 
+#from lightkube.resources.coordination_v1 import Lease
+#from lightkube.resources.core_v1 import Namespace
+#from lightkube.resources.apiextensions_v1 import CustomResourceDefinition
 
 
 import chopf
@@ -30,7 +31,7 @@ from ..tasks import Task
 from ..resources import get_resource
 
 from .builders import ControllerBuilder, InformerBuilder, StoreBuilder
-from .observers import CrdObserver, NamespaceObserver
+from .controllers import CrdController, NamespaceController, LeaseController
 
 
 log = logging.getLogger(__name__)
@@ -124,6 +125,8 @@ class Manager:
             'informer': {},
             'store': {},
         }
+        # The namespace this manager runs in.
+        self.manager_namespace = self.async_api_client.namespace
         self._active_namespaces = set()
         self._active_resources = set()
         self._controllers = {}
@@ -308,7 +311,7 @@ class Manager:
         log.debug('startup %s', self)
 
         # TODO: better place to do this?
-        # TODO: replace with _crd_observer
+        # TODO: replace with _crd_controller
         #await async_load_in_cluster_generic_resources(self.async_api_client)
         #print(resource_registry._registry)
 
@@ -345,14 +348,22 @@ class Manager:
                     tg.start_soon(signal_handler, tg.cancel_scope)
 
                 if not self.all_namespaces:
-                    await tg.start(self._start_observer,
-                        Namespace,
-                        NamespaceObserver,
+                    # Start namespace controller.
+                    await tg.start(self._start_controller,
+                        NamespaceController,
                     )
-                await tg.start(self._start_observer,
-                    CustomResourceDefinition,
-                    CrdObserver,
+
+                # Start custom resource controller.
+                await tg.start(self._start_controller,
+                    CrdController,
                 )
+
+                # Start leader election controller.
+                await tg.start(functools.partial(
+                    self._start_controller,
+                    LeaseController,
+                    namespace=self.manager_namespace,
+                ))
 
                 tg.start_soon(self.start)
 
@@ -368,20 +379,22 @@ class Manager:
 
         log.debug('exiting %s', self)
 
-    async def _start_observer(self, resource, observer, task_status: TaskStatus[None] = TASK_STATUS_IGNORED):
+    async def _start_controller(self, controller_class, namespace=None, task_status: TaskStatus[None] = TASK_STATUS_IGNORED):
+        """Start the given controller."""
+        controller = controller_class(
+            self,
+            self.async_client,
+            self.sync_client,
+            self.cache,
+        )
+        resource = controller.resource
         #store = self.cache.get_store(resource)
         store = Indexer()
         informer = Informer(
             self.async_api_client,
             store,
             resource,
-        )
-        controller = observer(
-            self,
-            self.async_client,
-            self.sync_client,
-            self.cache,
-            resource,
+            namespace=namespace,
         )
 
         # Start the controller.
