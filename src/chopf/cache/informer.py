@@ -239,6 +239,11 @@ class Informer(Task):
                 #    e.response.status_code,
                 #    message=f'HTTP error while listing/watching {self.api_version}/{self.kind}'
                 #) from e
+            except Exception as e:
+                # Workaround https://github.com/gtsystem/lightkube/issues/108
+                log.error(f'Unknown error while listing/watching {self.api_version}/{self.kind}')
+                log.error(e)
+                await anyio.sleep(3)
 
     async def _process_event(self, event, obj):
         try:
