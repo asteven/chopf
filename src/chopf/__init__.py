@@ -34,6 +34,15 @@ def get_index(resource, index_name):
     )
 
 
+def index(resource, index_name):
+    """Decorator that registers an indexer function with the given resources store."""
+    # Register minimal RBAC so the informer which will be populating this store
+    # can do its job.
+    resource_rbac(resource, verbs='get;list;watch')
+    store = manager.store(resource)
+    return store.index(index_name)
+
+
 def get_async_client():
     return manager.async_client
 
