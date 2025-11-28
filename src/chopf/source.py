@@ -47,8 +47,8 @@ class EventSource(Task):
         return hash((api_version, kind, self.handler))
 
     async def event_stream_handler(self):
-        async with self.rx:
-            async for event in self.rx:
+        async with self._rx:
+            async for event in self._rx:
                 log.debug('received event: %s', event)
                 should_run = True
                 if self.predicates is not None:
@@ -75,7 +75,7 @@ class EventSource(Task):
 
     @property
     def stream(self):
-        stream = self.tx.clone()
+        stream = self._tx.clone()
         self._streams.append(stream)
         return stream
 
@@ -88,7 +88,7 @@ class EventSource(Task):
         log.debug('starting %s', self)
 
         try:
-            self.tx, self.rx = anyio.create_memory_object_stream()
+            self._tx, self._rx = anyio.create_memory_object_stream()
             async with anyio.create_task_group() as tg:
                 self._task_group = tg
                 try:
