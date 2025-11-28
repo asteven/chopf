@@ -17,10 +17,6 @@ from lightkube import Client as LightkubeSyncClient
 from lightkube.generic_resource import async_load_in_cluster_generic_resources, create_resources_from_crd
 from lightkube.core.resource_registry import resource_registry, LoadResourceError
 
-#from lightkube.resources.coordination_v1 import Lease
-#from lightkube.resources.core_v1 import Namespace
-#from lightkube.resources.apiextensions_v1 import CustomResourceDefinition
-
 
 import chopf
 from .. import exceptions
@@ -29,6 +25,7 @@ from ..controller import Controller
 from ..client import AsyncClient, SyncClient
 from ..tasks import Task
 from ..resources import get_resource
+from ..builder import resource_rbac
 
 from .builders import ControllerBuilder, InformerBuilder, StoreBuilder
 from .controllers import CrdController, NamespaceController, LeaseController
@@ -97,6 +94,10 @@ class StreamReceiver(Task):
 
                 finally:
                     log.debug('stopping %s', self)
+                    # Close all the clones of our inbound stream that we
+                    # handed out.
+                    for stream in self._streams:
+                        stream.close()
         finally:
             log.debug('stopped %s', self)
 
@@ -132,7 +133,7 @@ class Manager:
         self._controllers = {}
         self._stream_receivers = {}
         self._main_task_group = None  # Main taskgroup
-        self._task_group = None
+        self._task_group = None # regular taskgroup
         self._stop = None
         self._exit = anyio.Event()
 
@@ -217,6 +218,7 @@ class Manager:
                 for stream_receiver in stream_receivers:
                     if not stream_receiver.is_running:
                         await self._task_group.start(stream_receiver)
+                        #self._task_group.start_soon(stream_receiver)
                 for informer in self.cache.get_informers_by(resource=resource):
                     for stream_receiver in stream_receivers:
                         if not informer.has_stream(key=stream_receiver):
@@ -230,11 +232,12 @@ class Manager:
             if resource in self._active_resources:
                 if not controller.is_running:
                     await self._task_group.start(controller)
+                #    #self._task_group.start_soon(controller)
 
-                for source in controller.event_sources:
-                    for informer in self.cache.get_informers_by(resource=source.resource):
-                        if not informer.has_stream(key=source):
-                            informer.add_stream(source.stream, key=source)
+                #for source in controller.event_sources:
+                #    for informer in self.cache.get_informers_by(resource=source.resource):
+                #        if not informer.has_stream(key=source):
+                #            informer.add_stream(source.stream, key=source)
             else:
                 controller.stop()
 
@@ -310,11 +313,6 @@ class Manager:
 
         log.debug('startup %s', self)
 
-        # TODO: better place to do this?
-        # TODO: replace with _crd_controller
-        #await async_load_in_cluster_generic_resources(self.async_api_client)
-        #print(resource_registry._registry)
-
         for builder in self._builders['informer'].values():
             log.debug('creating stream receivers from informer builder: %r', builder)
             for receiver in builder._stream_receivers:
@@ -386,6 +384,7 @@ class Manager:
             self.async_client,
             self.sync_client,
             self.cache,
+            wait_for_cache=False,
         )
         resource = controller.resource
         #store = self.cache.get_store(resource)
@@ -417,6 +416,9 @@ class Manager:
         task_status.started()
 
     def register_resource(self, resource):
+        # Register minimal read-only RBAC so the informers and clients which
+        # will be working with the resource can do their job.
+        resource_rbac(resource, verbs='get;list;watch')
         resource = get_resource(resource)
         self.resources.add(resource)
 
