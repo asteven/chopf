@@ -52,7 +52,7 @@ def main(
 #    paths: Annotated[Optional[List[str]], typer.Argument(default_factory=list)],
 #    paths: Annotated[List[pathlib.Path], typer.Argument(default_factory=list)],
 @app.command(name='run', short_help='run')
-def run(
+def _run(
     ctx: typer.Context,
     modules: Annotated[List[str], typer.Option()] = None,
     paths: Annotated[List[pathlib.Path], typer.Argument()] = None,
@@ -96,7 +96,7 @@ def run(
 @app.command(
     name='crd', short_help='Generate CRDs from the resources in the given modules'
 )
-def crd(
+def _crd(
     ctx: typer.Context,
     modules: Annotated[List[str], typer.Option()] = None,
     #paths: Annotated[List[pathlib.Path], typer.Argument()] = None,
@@ -115,6 +115,27 @@ def crd(
     crds = resources.custom_resource_registry.all_crds()
     crds_yaml = resources.resources_to_yaml(*crds)
     print(crds_yaml)
+
+
+@app.command(
+    name='rbac', short_help='Generate RBAC definitions from the given modules'
+)
+def _rbac(
+    ctx: typer.Context,
+    modules: Annotated[List[str], typer.Option()] = None,
+    #paths: Annotated[List[pathlib.Path], typer.Argument()] = None,
+) -> None:
+
+    sys.path.insert(0, os.getcwd())
+    modules = modules or []
+    #paths = paths or []
+    loaders.preload(
+        #paths=paths,
+        modules=modules,
+    )
+
+    from chopf.builder._rbac import print_rbac
+    print_rbac()
 
 
 if __name__ == '__main__':
