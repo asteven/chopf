@@ -15,4 +15,4 @@ uv.lock
 tmp/
 examples/
 docs/
-_*
+_*/
