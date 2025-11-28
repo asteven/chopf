@@ -46,6 +46,7 @@ class Cache(Task):
 
         self._task_group = None  # Main taskgroup
         self._stop = anyio.Event()
+        self._synced = anyio.Event()
         self._registered_resources = set()
         self._stores = {}
         self._informers = []
@@ -54,6 +55,10 @@ class Cache(Task):
         _id = id(self)
         resources = {f'{r.apiVersion}/{r.kind}' for r in self._resources}
         return f'<Cache {_id} namespaces: {self.namespaces} resources: {resources}>'
+
+    @property
+    def synced(self):
+        return self._synced.wait()
 
     @property
     def resources(self):
@@ -99,6 +104,7 @@ class Cache(Task):
                         pass
 
     def reconcile_informers(self):
+        self._synced = anyio.Event()
         # Remove obsolete informers.
         current_informers = self._informers.copy()
         for informer in current_informers:
@@ -132,6 +138,7 @@ cache namespaces: {self.namespaces}
             if not informer.is_running:
                 if self._task_group:
                     await self._task_group.start(informer)
+        self._synced.set()
 
     def add_informer(self, informer):
         self._informers.append(informer)
@@ -212,6 +219,7 @@ cache namespaces: {self.namespaces}
 
                 try:
                     log.info('started %s', self)
+
                     # Inform any awaiters that we are ready.
                     self._running.set()
                     task_status.started()
