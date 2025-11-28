@@ -1,4 +1,5 @@
 import dataclasses
+import functools
 import logging
 import typing
 
@@ -43,10 +44,12 @@ class Controller(Task):
     name: str = None
     predicates: typing.List[typing.Callable] = dataclasses.field(default_factory=list)
     watches: dict = dataclasses.field(default_factory=dict)
+    tasks: typing.List[typing.Callable] = dataclasses.field(default_factory=list)
     reconcile: typing.Callable = None
     startup: typing.Callable = None
     shutdown: typing.Callable = None
     concurrent_reconciles: int = None
+    wait_for_cache: bool = True
 
     @property
     def api_version(self) -> str:
@@ -58,9 +61,9 @@ class Controller(Task):
 
     def __init__(self, async_client, sync_client, cache, resource,
         name=None,
-        predicates=None, watches=None,
+        predicates=None, watches=None, tasks=None,
         reconcile=None, startup=None, shutdown=None,
-        concurrent_reconciles=1):
+        concurrent_reconciles=1, wait_for_cache=True):
         super().__init__()
         self.async_client = async_client
         self.sync_client = sync_client
@@ -68,6 +71,7 @@ class Controller(Task):
         self.resource = resource
         self.predicates = predicates or []
         self.watches = watches or {}
+        self.tasks = tasks or []
         if reconcile:
             self.reconcile = reconcile
         if startup:
@@ -75,6 +79,7 @@ class Controller(Task):
         if shutdown:
             self.shutdown = shutdown
         self.concurrent_reconciles = concurrent_reconciles
+        self.wait_for_cache = wait_for_cache
 
         self._task_group = None  # Main taskgroup
         self._stop = anyio.Event()
@@ -93,7 +98,6 @@ class Controller(Task):
             self._add_event_source(
                 watch['resource'],
                 watch['handler'],
-                meta=watch['meta'],
                 **watch['kwargs'],
             )
 
@@ -144,13 +148,7 @@ class Controller(Task):
             controller=True,
         )
 
-    def _add_event_source(self, resource, handler, meta=False, **kwargs):
-        # TODO: pass `meta` to watcher so it can set header on request like:
-        #    params = {
-        #        "header_params": {
-        #            "Accept": "application/json;as=PartialObjectMetadataList;v=v1;g=meta.k8s.io"
-        #        }
-        #    }
+    def _add_event_source(self, resource, handler, **kwargs):
         #log.debug(f'_add_event_source {resource} {handler} {kwargs}')
         source = EventSource(
             self.queue,
@@ -259,6 +257,20 @@ class Controller(Task):
             self._task_group.cancel_scope.cancel()
         self.reset_task()
 
+    async def _run_tasks(self):
+        if self.tasks:
+            async with anyio.create_task_group() as tg:
+                for task in self.tasks:
+                    if is_async_fn(task):
+                        tg.start_soon(task, self.async_client)
+                    else:
+                        tg.start_soon(anyio.to_thread.run_sync,
+                            functools.partial(
+                                task,
+                                self.sync_client,
+                            )
+                        )
+
     async def __call__(self, task_status: TaskStatus[None] = TASK_STATUS_IGNORED):
         log.debug('starting %s', self)
 
@@ -271,6 +283,9 @@ class Controller(Task):
 
                     for source in self._event_sources:
                         await tg.start(source)
+                        for informer in self.cache.get_informers_by(resource=source.resource):
+                            if not informer.has_stream(key=source):
+                                informer.add_stream(source.stream, key=source)
 
                     #log.debug('started %s', self)
                     log.info('started %s', self)
@@ -280,9 +295,13 @@ class Controller(Task):
 
                     await tg.start(self.queue)
 
+                    if self.wait_for_cache:
+                        await self.cache.synced
+
                     if self.startup is not None:
                         await tg.start(self._startup)
 
+                    tg.start_soon(self._run_tasks)
                     tg.start_soon(self._run_reconcilers)
 
                     # Wait until told otherwise.
