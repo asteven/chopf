@@ -5,11 +5,12 @@ import anyio
 
 from lightkube.core import resource as lkr
 from lightkube.core.exceptions import ApiError
+
+
 from .exceptions import ApiObjectNotFound
-
-
 from .controller import Request
 from .resources import get_resource
+
 
 __all__ = [
     'Client',
