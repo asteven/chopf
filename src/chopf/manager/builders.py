@@ -3,57 +3,10 @@ import collections
 import logging
 
 from ..controller import requests_from_event_for_owner
+from ..builder import resource_rbac
 
 
 log = logging.getLogger(__name__)
-
-
-Callback = collections.namedtuple('Callback', ['func', 'args', 'kwargs'])
-
-
-class CallbackCollector:
-    def __init__(self, events):
-        self._events = events
-        self._callbacks = {}
-
-    def __repr__(self):
-        _id = id(self)
-        return f'<{self.__class__.__name__} {_id} {self._events} {self._callbacks}>'
-
-    def __getattr__(self, key):
-        if key in self._events:
-            callbacks = self._callbacks.get(key, None)
-            if callbacks is None:
-                callbacks = []
-                self._callbacks[key] = callbacks
-
-            def decorator(*args, **kwargs):
-                if len(args) == 1 and callable(args[0]):
-                    # Used as:
-                    # @on.something
-                    # def some_function(*args, **kwargs):
-                    #     pass
-                    func = args[0]
-                    d_args = kwargs.get('__args', [])
-                    d_kwargs = kwargs.get('__kwargs', {})
-                    callbacks.append(Callback(func, d_args, d_kwargs))
-                else:
-                    # Used as:
-                    # @on.something(arg1, arg2, kw1=1, kw2=2)
-                    # def some_function(*args, **kwargs):
-                    #     pass
-                    return functools.partial(decorator, __args=args, __kwargs=kwargs)
-
-            return decorator
-        else:
-            raise AttributeError(key)
-
-    def __getitem__(self, key):
-        # return the callbacks for the given key
-        return self._callbacks[key]
-
-    def items(self):
-        return self._callbacks.items()
 
 
 class Builder:
@@ -94,6 +47,7 @@ class ControllerBuilder(Builder):
         self._kwargs = {
             'name': name,
             'predicates': [],
+            'tasks': [],
             'watches': {},
             'startup': None,
             'shutdown': None,
@@ -101,6 +55,9 @@ class ControllerBuilder(Builder):
             'concurrent_reconciles': 1,
         }
         self._instance = None
+        # Register minimal RBAC for this controller to work with his
+        # primary resource.
+        resource_rbac(resource, verbs='get;list;watch')
 
     def __getattr__(self, key):
         # proxy to Controller instance
@@ -117,40 +74,34 @@ class ControllerBuilder(Builder):
             resource=self.resource,
         )
 
-    def _add_watch(self, resource, handler, meta=False, **kwargs):
-        # TODO: pass `meta` to watcher so it can set header on request like:
-        #    params = {
-        #        "header_params": {
-        #            "Accept": "application/json;as=PartialObjectMetadataList;v=v1;g=meta.k8s.io"
-        #        }
-        #    }
+    def _add_watch(self, resource, handler, **kwargs):
         self.manager.register_resource(resource)
         self._kwargs['watches'][resource] = {
             'resource': resource,
             'handler': handler,
-            'meta': meta,
             'kwargs': kwargs,
         }
 
-    def watch_owner(self, resource, meta=False):
+    def watch_owner(self, resource):
         """Function that registers a watch for the given resource
         and that enqueues the owning resource if it is of the same api_version
         and type as the resources managed by this controller.
         """
-        # TODO: generate rbac for: get, list, watch
+        # Register minimal RBAC for watch to work.
+        resource_rbac(resource, verbs='get;list;watch')
         self._add_watch(
-            resource, requests_from_event_for_owner, meta=meta, owner=self.resource
+            resource, requests_from_event_for_owner, owner=self.resource
         )
 
-    def watch(self, resource, meta=False):
+    def watch(self, resource):
         """Decorator that registers a watch for the given resource.
         The decorated function must yield Request instances that
         are then added to the workqueue for reconcilation.
         """
-
-        # TODO: generate rbac for: get, list, watch
+        # Register minimal RBAC for watch to work.
+        resource_rbac(resource, verbs='get;list;watch')
         def decorator(f):
-            self._add_watch(resource, f, meta=meta)
+            self._add_watch(resource, f)
 
         return decorator
 
@@ -211,8 +162,23 @@ class ControllerBuilder(Builder):
             # We're called as @decorator without parens.
             return decorator(func)
 
+    def task(self, func=None, /):
+        """Decorator that registers a background task function with this controller.
+        Async tasks are run in the main loop while sync tasks are run in a thread pool.
+        """
+
+        def decorator(f):
+            self._kwargs['tasks'].append(f)
+
+        if func is None:
+            # We're called as @decorator() with parens.
+            return decorator
+        else:
+            # We're called as @decorator without parens.
+            return decorator(func)
+
     def reconcile(self, func=None, /, *, concurrency=1):
-        """Decorator that registers an reconcile function with this controller."""
+        """Decorator that registers a reconcile function with this controller."""
         existing = self._kwargs.get('reconcile', None)
         if callable(existing):
             raise Exception(
