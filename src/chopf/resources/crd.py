@@ -45,7 +45,8 @@ _subresource_verbs = [
 class ModelMixin(DictMixin):
     @classmethod
     def from_dict(cls, d, lazy=True):
-        # print(f'ModelMixin.from_dict: {d}')
+        # Custom Resource models can not be lazy.
+        lazy = False
         if isinstance(d, cls):
             return d
         else:
@@ -53,7 +54,6 @@ class ModelMixin(DictMixin):
 
     def to_dict(self, dict_factory=dict):
         d = super().to_dict(dict_factory=dict_factory)
-        # print(f'ModelMixin.to_dict: {self} {d}')
         return d
 
 
@@ -73,7 +73,8 @@ def printcolumn(
             format=format,
             priority=priority,
         )
-        crd_version.additionalPrinterColumns.append(column)
+        # Preserve the order.
+        crd_version.additionalPrinterColumns.insert(0, column)
         return cls
 
     return _wrap
