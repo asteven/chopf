@@ -127,12 +127,12 @@ class Cache(Task):
                 informer = self.get_informer(resource)
 
     async def reconcile(self):
-        print(f'''
-cache namespaces: {self.namespaces}
-       informers: {self._informers}
-       resources: {self.resources}
-         reg-res: {self._registered_resources}
-''')
+#        print(f'''
+#cache namespaces: {self.namespaces}
+#       informers: {self._informers}
+#       resources: {self.resources}
+#         reg-res: {self._registered_resources}
+#''')
         # Ensure all informers are running.
         for informer in self._informers:
             if not informer.is_running:

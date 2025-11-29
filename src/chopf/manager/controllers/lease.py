@@ -10,14 +10,16 @@ import chopf
 from ...controller import Controller
 
 
+# WIP, not finished, not working
 class LeaseController(Controller):
     def __init__(self, manager, *args, **kwargs):
         self.manager = manager
         super().__init__(*args, Lease, **kwargs)
 
     async def startup(self, client: chopf.Client):
-        print('lease controller start')
+        #print('lease controller start')
         # TODO: create lease object if it does not yet exist
+        pass
 
     async def reconcile(self,
         client: chopf.Client, request: chopf.Request
