@@ -72,3 +72,26 @@ chaos-pod   1/1     Running             0          6s
 chaos-pod   1/1     Terminating         0          21s
 ...
 ```
+
+
+## High level overview
+
+chopf is loosly modeled after the [kubernetes controller-runtime implementation](https://book.kubebuilder.io/architecture).
+
+- Store/Index: a local store for kubernetes objects with optional indexers that provide indexed views of the store
+- Informer: lists and watches kubernetes objects and populates a store
+- Controller: reconciles objects for a single kubernetes resource
+- Cache: manages stores and informers for selected (and active) namespaces and resources
+- Builders: declarative interfaces to create stores, informers or controllers
+- Manager: manages namespaces, resources and controllers and ties everything together
+
+
+### High level API
+
+There are some examples showing the high level API in the ./examples folder.
+
+You can run them like this:
+
+```sh
+uv run chopf run ./examples/controller_pod_async.py
+```
