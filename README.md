@@ -90,8 +90,17 @@ chopf is loosly modeled after the [kubernetes controller-runtime implementation]
 
 There are some examples showing the high level API in the ./examples folder.
 
+
 You can run them like this:
 
 ```sh
 uv run chopf run ./examples/controller_pod_async.py
 ```
+For verbose output, use `chopf -v run ...`, for debug output `chopf -d run ...`.
+
+To have something to show/list/view/play there's a replicaset definition you can use:
+
+```
+kubectl apply -f ./examples/hello-repliaset.yaml
+```
+
