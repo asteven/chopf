@@ -86,17 +86,14 @@ async def reconcile(client: chopf.Client, request: chopf.Request):
 
     # Use the index we defined above to get pods by their IP address.
     pods_by_ip = podctl.get_index('by_ip')
-    print(f'   pods_by_index: {pods_by_ip}')
-    keys = pods_by_ip.keys()
-    print(f'   by_ip keys: {keys}')
-    values = pods_by_ip.values()
-    print(f'   by_ip values: {values}')
-    items = pods_by_ip.items()
-    print(f'   by_ip items: {items}')
+    print(f'   pods_by_ip: {pods_by_ip}: {list(pods_by_ip)}')
+    print(f'   pods_by_ip keys: {pods_by_ip.keys()}')
+    print(f'   pods_by_ip values: {pods_by_ip.values()}')
+    print(f'   pods_by_ip items: {pods_by_ip.items()}')
 
     # Get pods indexed by label.
     pods_by_label = podctl.get_index('by_label')
-    print(f'   pods_by_label: {pods_by_ip}')
+    print(f'   pods_by_label: {pods_by_label}: {list(pods_by_label)}')
 
     print()
     await anyio.sleep(2)
