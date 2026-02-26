@@ -1,3 +1,4 @@
+import datetime
 import functools
 import logging
 
@@ -5,7 +6,10 @@ import anyio
 
 from lightkube.core import resource as lkr
 from lightkube.core.exceptions import ApiError
-
+from lightkube.resources.core_v1 import Event
+from lightkube.models.core_v1 import EventSource
+from lightkube.models.core_v1 import ObjectReference
+from lightkube.models.meta_v1 import ObjectMeta
 
 from .exceptions import ApiObjectNotFound
 from .controller import Request
@@ -73,6 +77,36 @@ class Client:
     def delete(self, request=None, *, resource=None, name=None, namespace=None):
         """Delete from API server."""
         raise NotImplementedError()
+
+    def _create_event(self, obj, type='Normal', reason='Updated', message=None):
+        now = datetime.datetime.now(datetime.timezone.utc)
+        obj_ref = ObjectReference(
+            apiVersion=obj.apiVersion,
+            kind=obj.kind,
+            name=obj.metadata.name,
+            namespace=obj.metadata.namespace,
+            resourceVersion=obj.metadata.resourceVersion,
+            uid=obj.metadata.uid,
+        )
+        _event = Event(
+            metadata=ObjectMeta(
+               namespace=obj.metadata.namespace,
+               generateName='todo-event-name-prefix',
+            ),
+            action='Action?',
+            type=type,
+            reason=reason,
+            message=message,
+            reportingComponent='todo-reporting_component',
+            reportingInstance='todo-reporting_instance',
+            # used in the "From" column in `kubectl describe`.
+            source=EventSource(component='todo-reporting_component', host='todo-controller-host'),
+            involvedObject=obj_ref,
+            firstTimestamp=now,  # seen in `kubectl describe ...`
+            lastTimestamp=now,  # seen in `kubectl get events`
+            eventTime=now,
+        )
+        return _event
 
 
 class AsyncClient(Client):
@@ -168,6 +202,12 @@ class AsyncClient(Client):
             request, resource=resource, name=name, namespace=namespace
         )
         return await self.api_client.delete(resource, name=name, namespace=namespace)
+
+    async def event(self, resource, type='Normal', reason='Updated', message=None):
+        resource = get_resource(resource)
+        event = self._create_event(resource, type=type, reason=reason, message=message)
+        result = await self.api_client.create(event)
+        return result
 
 
 class SyncClient(Client):
@@ -265,3 +305,10 @@ class SyncClient(Client):
             request, resource=resource, name=name, namespace=namespace
         )
         return self.api_client.delete(resource, name=name, namespace=namespace)
+
+    def event(self, resource, type='Normal', reason='Updated', message=None):
+        resource = get_resource(resource)
+        event = self._create_event(resource, type=type, reason=reason, message=message)
+        result = self.api_client.create(event)
+        return result
+
