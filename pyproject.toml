@@ -1,6 +1,7 @@
 [project]
 name = "chopf"
-version = "0.1.1"
+#version = "0.1.1"
+dynamic = ["version"]
 description = "A Kubernetes container runtime implementation for Python."
 readme = "README.md"
 authors = [
@@ -22,7 +23,7 @@ dependencies = [
 chopf = 'chopf.cli:app'
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [dependency-groups]
@@ -33,6 +34,9 @@ dev = [
 
 [tool.ruff.format]
 quote-style = "single"
+
+[tool.hatch.version]
+source = "vcs"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/chopf"]
