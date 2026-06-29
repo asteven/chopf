@@ -108,13 +108,6 @@ class Manager:
         self.namespaces = None
         self.resources = set()
         self.debug = False
-        self.async_api_client = LightkubeAsyncClient()
-        self.sync_api_client = LightkubeSyncClient()
-        self.cache = Cache(
-            self.async_api_client,
-        )
-        self.async_client = AsyncClient(self.async_api_client, self.cache)
-        self.sync_client = SyncClient(self.sync_api_client, self.cache)
         self.is_active = False
         # The unique ID of this operator, used in leader election.
         self.operator_id = '%s-%s' % (
@@ -126,8 +119,6 @@ class Manager:
             'informer': {},
             'store': {},
         }
-        # The namespace this manager runs in.
-        self.manager_namespace = self.async_api_client.namespace
         self._active_namespaces = set()
         self._active_resources = set()
         self._controllers = {}
@@ -136,6 +127,25 @@ class Manager:
         self._task_group = None # regular taskgroup
         self._stop = None
         self._exit = anyio.Event()
+
+#        self.async_api_client = LightkubeAsyncClient()
+#        self.sync_api_client = LightkubeSyncClient()
+#        self.cache = Cache(
+#            self.async_api_client,
+#        )
+#        self.async_client = AsyncClient(self.async_api_client, self.cache)
+#        self.sync_client = SyncClient(self.sync_api_client, self.cache)
+#        # The namespace this manager runs in.
+#        self.manager_namespace = self.async_api_client.namespace
+
+        # These are all set at runtime when starting up.
+        self.async_api_client = None
+        self.sync_api_client = None
+        self.cache = None
+        self.async_client = None
+        self.sync_client = None
+        # The namespace this manager runs in.
+        self.manager_namespace = None
 
     def __repr__(self):
         _id = id(self)
@@ -304,6 +314,16 @@ class Manager:
     async def __call__(
         self, all_namespaces=False, namespaces=None, setup_signal_handler=False
     ):
+        self.async_api_client = LightkubeAsyncClient()
+        self.sync_api_client = LightkubeSyncClient()
+        self.cache = Cache(
+            self.async_api_client,
+        )
+        self.async_client = AsyncClient(self.async_api_client, self.cache)
+        self.sync_client = SyncClient(self.sync_api_client, self.cache)
+        # The namespace this manager runs in.
+        self.manager_namespace = self.async_api_client.namespace
+
         self.all_namespaces = all_namespaces
         if not self.all_namespaces:
             if namespaces is not None:
