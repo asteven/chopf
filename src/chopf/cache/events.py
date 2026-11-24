@@ -2,23 +2,6 @@ import dataclasses
 
 
 class Event:
-#    def __getattr__(self, which):
-#        """Make subclasses available in the class namespace.
-#        Allows to use patterns like the following without having
-#        to import all the event classes.
-#
-#        ```
-#        match type(event):
-#            case event.CreateEvent:
-#                pass
-#            case event.UpdateEvent:
-#                pass
-#        ```
-#        """
-#        for subclass in Event.__subclasses__():
-#            if which == subclass.__name__:
-#                return subclass
-
     def __init_subclass__(cls, **kwargs):
         """Make subclasses available in the class namespace.
         Allows to use patterns like the following without having
