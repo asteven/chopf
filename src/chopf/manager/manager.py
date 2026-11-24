@@ -347,14 +347,18 @@ class Manager:
 
                 if not self.all_namespaces:
                     # Start namespace controller.
-                    await tg.start(self._start_controller,
+                    await tg.start(functools.partial(
+                        self._start_controller,
                         NamespaceController,
-                    )
+                        concurrent_reconciles=2,
+                    ))
 
                 # Start custom resource controller.
-                await tg.start(self._start_controller,
+                await tg.start(functools.partial(
+                    self._start_controller,
                     CrdController,
-                )
+                    concurrent_reconciles=4,
+                ))
 
                 # Start leader election controller.
                 await tg.start(functools.partial(
@@ -377,13 +381,14 @@ class Manager:
 
         log.debug('exiting %s', self)
 
-    async def _start_controller(self, controller_class, namespace=None, task_status: TaskStatus[None] = TASK_STATUS_IGNORED):
+    async def _start_controller(self, controller_class, concurrent_reconciles=1, namespace=None, task_status: TaskStatus[None] = TASK_STATUS_IGNORED):
         """Start the given controller."""
         controller = controller_class(
             self,
             self.async_client,
             self.sync_client,
             self.cache,
+            concurrent_reconciles=concurrent_reconciles,
             wait_for_cache=False,
         )
         resource = controller.resource
