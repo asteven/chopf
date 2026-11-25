@@ -1,4 +1,5 @@
 import anyio
+import anyio.lowlevel
 import pytest
 
 from chopf.manager.manager import StreamReceiver
@@ -27,7 +28,7 @@ async def test_stream_receiver_dispatches_to_handler():
         stream = receiver.stream
         await stream.send('hello')
         await stream.aclose()
-        await anyio.sleep(0)
+        await anyio.lowlevel.checkpoint()
         assert received == ['hello']
         receiver.stop()
         tg.cancel_scope.cancel()

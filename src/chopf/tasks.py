@@ -1,7 +1,6 @@
 import anyio
-from anyio import TASK_STATUS_IGNORED
+from anyio import TASK_STATUS_IGNORED, get_cancelled_exc_class
 from anyio.abc import TaskStatus
-from anyio import get_cancelled_exc_class
 
 
 class Task:
@@ -49,9 +48,8 @@ class ExampleTask(Task):
             # Wait until told otherwise.
             await self._stop.wait()
 
-        except get_cancelled_exc_class():
+        except get_cancelled_exc_class():  # noqa: TRY203 - template for cleanup
             # (perform cleanup)
-            pass
             # Async cleanup work has to be done in a shielded cancel scope.
             # e.g.
             # with CancelScope(shield=True):
@@ -67,8 +65,7 @@ class ExampleTask(Task):
         if self._task_group:
             self._task_group.cancel_scope.cancel()
         # Or alterntatively set the stop event.
-        #self._stop.set()
+        # self._stop.set()
 
         # As anyio events can not be re-used we have to re-create them.
         self.reset_task()
-

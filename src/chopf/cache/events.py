@@ -1,5 +1,7 @@
 import dataclasses
 
+from ..resources import identity
+
 
 class Event:
     def __init_subclass__(cls, **kwargs):
@@ -18,7 +20,7 @@ class Event:
         setattr(Event, cls.__name__, cls)
 
     def __repr__(self):
-        return f'<{self.__class__.__name__} {self.obj}>'
+        return f'<{self.__class__.__name__} {identity.resource_repr(self.obj)}>'
 
 
 @dataclasses.dataclass(repr=False)
@@ -32,7 +34,7 @@ class UpdateEvent(Event):
     new: object
 
     def __repr__(self):
-        return f'<{self.__class__.__name__} {self.old} {self.new}>'
+        return f'<{self.__class__.__name__} {identity.resource_repr(self.old)} {identity.resource_repr(self.new)}>'
 
 
 @dataclasses.dataclass(repr=False)

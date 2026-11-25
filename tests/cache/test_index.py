@@ -2,7 +2,8 @@ import pytest
 from lightkube.models.meta_v1 import ObjectMeta
 from lightkube.resources.core_v1 import Pod
 
-from chopf.cache.index import Indexer, index_by_namespace
+from chopf.cache.index import Indexer
+from chopf.exceptions import Error
 
 
 def build_pod(name: str, namespace: str | None = None):
@@ -24,7 +25,7 @@ def test_indexer_updates_namespace_index_on_add_update_delete():
     store.update(updated)
     index = store.get_index('namespace')
     assert index['ns-2'][0].metadata.name == 'foo'
-    assert 'ns-1' in index.keys()
+    assert 'ns-1' in index.keys()  # noqa: SIM118 - IndexView is not a dict
 
     store.delete(updated)
     assert index['ns-2'] == []
@@ -44,5 +45,5 @@ def test_indexer_custom_indexer():
 
 def test_indexer_add_indexers_conflict_raises():
     store = Indexer()
-    with pytest.raises(Exception):
+    with pytest.raises(Error):
         store.add_indexers({'namespace': lambda obj: []})

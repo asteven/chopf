@@ -1,26 +1,23 @@
 import dataclasses
-
+import typing as t
 from dataclasses import dataclass
 from typing import dataclass_transform
 
-from lightkube.core.schema import DictMixin
+import msgspec
 from lightkube.core import resource as lkr
 from lightkube.core.resource_registry import resource_registry
-
+from lightkube.core.schema import DictMixin
+from lightkube.models.apiextensions_v1 import (
+    CustomResourceColumnDefinition,
+    CustomResourceDefinitionNames,
+    CustomResourceDefinitionSpec,
+)
 from lightkube.resources.apiextensions_v1 import (
     CustomResourceDefinition,
 )
 
-from lightkube.models.apiextensions_v1 import (
-    CustomResourceDefinitionNames,
-    CustomResourceDefinitionSpec,
-    CustomResourceColumnDefinition,
-)
-
-
-from .registry import custom_resource_registry
 from . import Resource
-
+from .registry import custom_resource_registry
 
 _resource_verbs = [
     'delete',
@@ -43,18 +40,84 @@ _subresource_verbs = [
 
 
 class ModelMixin(DictMixin):
+    """Base class for chopf models and resources.
+
+    Under lightkube v1 this is a msgspec.Struct (via DictMixin); decoding
+    is always eager, so the old ``lazy`` argument is accepted for call-site
+    compatibility but ignored.
+    """
+
     @classmethod
-    def from_dict(cls, d, lazy=True):
-        # Custom Resource models can not be lazy.
-        lazy = False
+    def from_dict(cls, d, lazy=False):
         if isinstance(d, cls):
             return d
-        else:
-            return super(ModelMixin, cls).from_dict(d, lazy=lazy)
+        return super().from_dict(d)
 
-    def to_dict(self, dict_factory=dict):
-        d = super().to_dict(dict_factory=dict_factory)
-        return d
+
+def _struct_from_model(name, model, bases, extra_fields=()):
+    """Create a real msgspec.Struct class from a user model.
+
+    ``model`` may be a plain class, a stdlib dataclass, or an existing
+    Struct. Stdlib dataclasses are only used as a *parse* step (convenient
+    access to defaults/default_factories); the emitted class is always a
+    Struct, which lightkube v1 requires for direct decoding of list/watch
+    items.
+
+    ``extra_fields`` are (name, type, default) tuples injected ahead of the
+    model's own fields (used for apiVersion/kind identity); model fields
+    with the same name are dropped.
+    """
+    injected = {f[0] for f in extra_fields}
+    fields = list(extra_fields)
+    namespace = {'__doc__': model.__doc__}
+
+    if isinstance(model, type) and issubclass(model, msgspec.Struct):
+        for f in msgspec.structs.fields(model):
+            if f.name in injected:
+                continue
+            if f.required:
+                fields.append((f.name, f.type))
+            elif f.default_factory is not msgspec.NODEFAULT:
+                fields.append(
+                    (f.name, f.type, msgspec.field(default_factory=f.default_factory))
+                )
+            else:
+                fields.append((f.name, f.type, f.default))
+        field_names = {f.name for f in msgspec.structs.fields(model)}
+    else:
+        if not dataclasses.is_dataclass(model):
+            model = dataclass(model, kw_only=True)
+        type_hints = t.get_type_hints(model, include_extras=True)
+        field_names = set()
+        for f in dataclasses.fields(model):
+            if f.name in injected:
+                continue
+            field_names.add(f.name)
+            type_ = type_hints.get(f.name, t.Any)
+            if f.default is not dataclasses.MISSING:
+                fields.append((f.name, type_, f.default))
+            elif f.default_factory is not dataclasses.MISSING:
+                fields.append(
+                    (f.name, type_, msgspec.field(default_factory=f.default_factory))
+                )
+            else:
+                fields.append((f.name, type_))
+
+    # Carry over user-defined methods/properties/class attributes.
+    for attr, value in model.__dict__.items():
+        if attr in field_names:
+            continue
+        if attr == '__post_init__' or not attr.startswith('__'):
+            namespace[attr] = value
+
+    return msgspec.defstruct(
+        name,
+        fields,
+        bases=bases,
+        kw_only=True,
+        module=model.__module__,
+        namespace=namespace,
+    )
 
 
 # @see https://www.brendanp.com/pretty-printing-with-kubebuilder/
@@ -96,10 +159,6 @@ def resource(
     def _wrap(model):
         # The decorated class is our model.
 
-        # Ensure the model is a dataclass.
-        if not dataclasses.is_dataclass(model):
-            model = dataclass(model, kw_only=True)
-
         nonlocal \
             group, \
             version, \
@@ -121,33 +180,32 @@ def resource(
             else:
                 plural = f'{singular}s'
 
-        # Ensure class __dict__ does not contain a nested __dict__ key.
-        # See https://jira.mongodb.org/browse/MOTOR-460
-        model_dict = dict(model.__dict__)
-        model_dict.pop('__dict__', None)
+        # Identity fields default to None, exactly like lightkube's own
+        # resources: the client fills them from _api_info on write
+        # (prepare_request) and the server payload carries them on read.
+        # Do NOT default them to the real values — DictMixin encodes with
+        # omit_defaults=True, so default-equal values are stripped from
+        # the payload and the API server rejects the object
+        # ("Object 'Kind' is missing"). NB: never assign apiVersion/kind
+        # as plain class attributes either — that would shadow the
+        # struct's member descriptors and break instance assignment.
+        identity_fields = [
+            ('apiVersion', str, None),
+            ('kind', str, None),
+        ]
 
-        # Create a lightkube resource based on the model.
+        # Create the resource struct based on the model.
         if scope == 'Cluster':
-            _Resource = type(
-                kind,
-                (Resource, lkr.GlobalResource, ModelMixin),
-                model_dict,
-            )
+            bases = (Resource, lkr.GlobalResource, ModelMixin)
         else:
-            _Resource = type(
-                kind,
-                (Resource, lkr.NamespacedResourceG, ModelMixin),
-                model_dict,
-            )
+            bases = (Resource, lkr.NamespacedResourceG, ModelMixin)
+        _Resource = _struct_from_model(kind, model, bases, extra_fields=identity_fields)
         # Create lightkube api-info.
         _Resource._api_info = lkr.ApiInfo(
             resource=lkr.ResourceDef(group, version, kind),
             plural=plural,
             verbs=_resource_verbs,
         )
-        # Ensure our resource knows what it is.
-        _Resource.apiVersion = _Resource._api_info.resource.api_version
-        _Resource.kind = _Resource._api_info.resource.kind
 
         # Create and register the resource with our own registry.
         try:
@@ -175,35 +233,27 @@ def resource(
             custom_resource_registry.add(crd)
 
         # Get and configure the version.
-        crd_version = custom_resource_registry.get_crd_version(model)
+        crd_version = custom_resource_registry.get_crd_version(_Resource)
         crd_version.name = version
         crd_version.served = served
         crd_version.storage = storage
 
         # Configure this versions status subresource.
-        status = model.__annotations__.get('status', None)
-        if status and status.__subresource:
+        status = t.get_type_hints(model).get('status', None)
+        if status is not None and getattr(status, '__subresource', False):
             crd_version.subresources['status'] = {}
             status_resource_name = f'{kind}Status'
-            # Create lightkube sub-resource based on the decorated class.
+            # Create the status sub-resource struct based on the same model.
             if scope == 'Cluster':
-                _StatusResource = type(
-                    status_resource_name,
-                    (
-                        lkr.GlobalSubResource,
-                        ModelMixin,
-                    ),
-                    model_dict,
-                )
+                status_bases = (lkr.GlobalSubResource, ModelMixin)
             else:
-                _StatusResource = type(
-                    status_resource_name,
-                    (
-                        lkr.NamespacedSubResource,
-                        ModelMixin,
-                    ),
-                    model_dict,
-                )
+                status_bases = (lkr.NamespacedSubResource, ModelMixin)
+            _StatusResource = _struct_from_model(
+                status_resource_name,
+                model,
+                status_bases,
+                extra_fields=identity_fields,
+            )
             _StatusResource._api_info = lkr.ApiInfo(
                 resource=_Resource._api_info.resource,
                 parent=_Resource._api_info.resource,
@@ -223,7 +273,8 @@ def resource(
 
         # Register the resource with lightkube.
         # TODO: removed this in favour of crd_observer in manager.
-        #resource_registry.register(_Resource)
+        # resource_registry.register(_Resource)
+        _ = resource_registry
 
         # Return the resource in place of the decorated class.
         return _Resource
@@ -234,18 +285,9 @@ def resource(
 @dataclass_transform()
 def subresource(resource_class=None, /):
     def _wrap(cls):
-        # Ensure class __dict__ does not contain a nested __dict__ key.
-        #   see https://jira.mongodb.org/browse/MOTOR-460
-        cls_dict = dict(cls.__dict__)
-        cls_dict.pop('__dict__', None)
-
-        # Create a model based on the decorated class.
-        model = type(cls.__name__, (ModelMixin,), cls_dict)
+        # Create a model struct based on the decorated class.
+        model = _struct_from_model(cls.__name__, cls, (ModelMixin,))
         model.__subresource = True
-
-        # Ensure the class is a dataclass.
-        if not dataclasses.is_dataclass(model):
-            model = dataclass(model)
         return model
 
     if resource_class is None:
@@ -257,16 +299,8 @@ def subresource(resource_class=None, /):
 @dataclass_transform()
 def model(resource_class=None, /):
     def _wrap(cls):
-        # Ensure class __dict__ does not contain a nested __dict__ key.
-        cls_dict = dict(cls.__dict__)
-        cls_dict.pop('__dict__', None)
-        # Create a model based on the decorated class.
-        model = type(cls.__name__, (ModelMixin,), cls_dict)
-
-        # Ensure the class is a dataclass.
-        if not dataclasses.is_dataclass(model):
-            model = dataclass(model)
-        return model
+        # Create a model struct based on the decorated class.
+        return _struct_from_model(cls.__name__, cls, (ModelMixin,))
 
     if resource_class is None:
         return _wrap

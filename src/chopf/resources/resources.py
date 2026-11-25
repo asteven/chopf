@@ -1,56 +1,8 @@
 from dataclasses import dataclass
 
-from lightkube.core import resource as lkr
 from lightkube.models import meta_v1
 
-
-# Monkeypatch lightkube Resources __repr__ to something more useful.
-def _resource__repr__(self):
-    # print(type(self))
-    api_version = self.apiVersion
-    kind = self.kind
-    # name = getattr(self.metadata, 'name', self.metadata.get('name', None))
-    # namespace = getattr(self.metadata, 'namespace', self.metadata.get('namespace', None))
-    name = self.metadata.name
-    namespace = self.metadata.namespace
-    resource_version = getattr(self.metadata, 'resourceVersion', None)
-    out = []
-    out.append(f'{api_version}/{kind}')
-    if namespace is not None:
-        out.append(f'{namespace}/{name}')
-    elif name is not None:
-        out.append(f'{name}')
-    if resource_version is not None:
-        out.append(resource_version)
-    ident = ' '.join(out)
-    return f'<Object {ident}>'
-
-lkr.Resource.__repr__ = _resource__repr__
-
-def _resource__str__(self):
-    return f'{self.apiVersion}/{self.kind}'
-
-lkr.Resource.__str__ = _resource__str__
-
-
-def get_resource(resource: lkr.Resource) -> lkr.Resource:
-    """Ensure lightkube Resources known their own apiVersion and kind.
-    See: https://github.com/gtsystem/lightkube/issues/76
-    """
-    info = lkr.api_info(resource)
-    try:
-        if resource.apiVersion in ('', None):
-            resource.apiVersion = info.resource.api_version
-        if resource.kind in ('', None):
-            resource.kind = info.resource.kind
-    except AttributeError as e:
-        pass
-    # For custom resources which are defined with a dataclass decorator
-    # our above monkey patching is overwritten.
-    # So patch resources again to ensure we always use our own __repr__.
-    resource.__repr__ = _resource__repr__
-    resource.__str__ = _resource__str__
-    return resource
+from . import identity
 
 
 @dataclass
@@ -59,9 +11,15 @@ class GroupVersion:
     version: str
 
 
-@dataclass
 class ObjectMeta(meta_v1.ObjectMeta):
-    def __post_init__(self, **kwargs):
+    """ObjectMeta with usable defaults for commonly mutated nested structures.
+
+    Under lightkube v1 this is a plain msgspec.Struct subclass; msgspec
+    calls ``__post_init__`` (no arguments) on construction *and* on
+    decode/convert, so decoded objects get the same defaults.
+    """
+
+    def __post_init__(self):
         # Set defaults for commonly used nested data structures.
         if self.annotations is None:
             self.annotations = {}
@@ -76,21 +34,20 @@ class ObjectMeta(meta_v1.ObjectMeta):
 
 
 class Resource:
-    apiVersion: str = None
-    # apiVersion: Annotated[str,
-    #    'APIVersion defines the versioned schema of this representation of an object.'
-    #    'Servers should convert recognized schemas to the latest internal value, and'
-    #    'may reject unrecognized values.'
-    #    'More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources'
-    # ] = None
-    kind: str = None
-    # kind: Annotated[str,
-    #     'Kind is a string value representing the REST resource this object represents.'
-    #     'Servers may infer this from the endpoint the client submits requests to.'
-    #     'Cannot be updated. In CamelCase.'
-    #     'More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds'
-    # ]
-    metadata: ObjectMeta = None
+    """Base class for chopf's own resources (created via @resource).
+
+    Provides readable dunders without touching lightkube's classes.
+    ``apiVersion``/``kind``/``metadata`` are real msgspec fields on the
+    generated resource classes (see resources/crd.py); they must NOT be
+    declared here — plain class attributes would shadow the struct's
+    member descriptors and break instance assignment.
+    """
+
+    def __repr__(self):
+        return identity.resource_repr(self)
+
+    def __str__(self):
+        return identity.resource_str(self)
 
 
 class GenericStruct:
@@ -128,4 +85,4 @@ class PartialObjectMetadata(GenericStruct):
     def __init__(self, name, namespace=None):
         if name is None:
             raise TypeError('PartialObjectMetadata: name can not be None')
-        super().__init__(**{'metadata': {'name': name, 'namespace': namespace}})
+        super().__init__(metadata={'name': name, 'namespace': namespace})

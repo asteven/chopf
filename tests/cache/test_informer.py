@@ -3,9 +3,9 @@ import pytest
 from lightkube.models.meta_v1 import ObjectMeta
 from lightkube.resources.core_v1 import Pod
 
+from chopf.cache.events import CreateEvent, DeleteEvent, UpdateEvent
 from chopf.cache.index import Indexer
 from chopf.cache.informer import Informer
-from chopf.cache.events import CreateEvent, UpdateEvent, DeleteEvent
 
 
 @pytest.fixture
@@ -23,8 +23,10 @@ def pod_factory():
 @pytest.mark.anyio
 async def test_informer_adds_object_and_dispatches_create_event(pod_factory):
     store = Indexer()
-    informer = Informer(api_client=object(), store=store, resource=Pod, namespace='default')
-    tx, rx = anyio.create_memory_object_stream(1)
+    informer = Informer(
+        api_client=object(), store=store, resource=Pod, namespace='default'
+    )
+    tx, rx = anyio.create_memory_object_stream(10)
     informer.add_stream(tx)
 
     pod = pod_factory('foo')
@@ -39,8 +41,10 @@ async def test_informer_adds_object_and_dispatches_create_event(pod_factory):
 @pytest.mark.anyio
 async def test_informer_updates_object_and_dispatches_update_event(pod_factory):
     store = Indexer()
-    informer = Informer(api_client=object(), store=store, resource=Pod, namespace='default')
-    tx, rx = anyio.create_memory_object_stream(1)
+    informer = Informer(
+        api_client=object(), store=store, resource=Pod, namespace='default'
+    )
+    tx, rx = anyio.create_memory_object_stream(10)
     informer.add_stream(tx)
 
     pod_v1 = pod_factory('foo', version='1')
@@ -61,8 +65,10 @@ async def test_informer_updates_object_and_dispatches_update_event(pod_factory):
 @pytest.mark.anyio
 async def test_informer_delete_dispatches_delete_event(pod_factory):
     store = Indexer()
-    informer = Informer(api_client=object(), store=store, resource=Pod, namespace='default')
-    tx, rx = anyio.create_memory_object_stream(1)
+    informer = Informer(
+        api_client=object(), store=store, resource=Pod, namespace='default'
+    )
+    tx, rx = anyio.create_memory_object_stream(10)
     informer.add_stream(tx)
 
     pod = pod_factory('foo')

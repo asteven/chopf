@@ -1,4 +1,3 @@
-import asyncio
 from types import SimpleNamespace
 
 import anyio
@@ -61,50 +60,6 @@ class DummyAsyncAPI:
         return {'deleted': name}
 
 
-class DummySyncAPI(DummyAsyncAPI):
-    async def get(self, *args, **kwargs):  # pragma: no cover - not used
-        raise AssertionError
-
-    async def list(self, *args, **kwargs):  # pragma: no cover - not used
-        raise AssertionError
-
-    async def create(self, *args, **kwargs):  # pragma: no cover - not used
-        raise AssertionError
-
-    async def replace(self, *args, **kwargs):  # pragma: no cover - not used
-        raise AssertionError
-
-    async def patch(self, *args, **kwargs):  # pragma: no cover - not used
-        raise AssertionError
-
-    async def delete(self, *args, **kwargs):  # pragma: no cover - not used
-        raise AssertionError
-
-    def get(self, resource, namespace=None, name=None):
-        self.get_calls.append((resource, namespace, name))
-        return SimpleNamespace(name=name)
-
-    def list(self, resource, namespace=None):
-        self.list_calls.append((resource, namespace))
-        return [SimpleNamespace(namespace=namespace)]
-
-    def create(self, resource):
-        self.create_calls.append(resource)
-        return resource
-
-    def replace(self, resource):
-        self.replace_calls.append(resource)
-        return resource
-
-    def patch(self, resource, name=None, namespace=None, obj=None):
-        self.patch_calls.append((resource, name, namespace, obj))
-        return obj
-
-    def delete(self, resource, name=None, namespace=None):
-        self.delete_calls.append((resource, name, namespace))
-        return {'deleted': name}
-
-
 @pytest.fixture
 def pod_resource():
     pod = Pod(metadata={'name': 'pod', 'namespace': 'default'})
@@ -144,7 +99,6 @@ async def test_async_client_get_falls_back_to_api(pod_resource):
 @pytest.mark.anyio
 async def test_async_client_get_raises_custom_on_api_error():
     cache = DummyCache()
-    api = DummyAsyncAPI()
 
     class FailingAPI(DummyAsyncAPI):
         async def get(self, *args, **kwargs):
@@ -153,3 +107,38 @@ async def test_async_client_get_raises_custom_on_api_error():
     client = AsyncClient(FailingAPI(), cache)
     with pytest.raises(ApiObjectNotFound):
         await client.get(resource=Pod, name='pod', namespace='default')
+
+
+@pytest.mark.anyio
+async def test_sync_client_delegates_get_to_async_client(pod_resource):
+    cache = DummyCache()
+    cache.resources = {Pod}
+    cache.namespaces = {'default'}
+    api = DummyAsyncAPI()
+    async_client = AsyncClient(api, cache)
+    sync_client = SyncClient(async_client)
+
+    request = Request(Pod, 'pod', namespace='default')
+    result = await anyio.to_thread.run_sync(sync_client.get, request)
+
+    assert result.name == 'pod'
+    assert cache.get_calls == [(Pod, 'default', 'pod')]
+    assert api.get_calls == []
+
+
+@pytest.mark.anyio
+async def test_sync_client_delegates_kwargs(pod_resource):
+    cache = DummyCache()
+    api = DummyAsyncAPI()
+    async_client = AsyncClient(api, cache)
+    sync_client = SyncClient(async_client)
+
+    def call():
+        return sync_client.patch(
+            resource=Pod, name='pod', namespace='default', obj={'a': 1}
+        )
+
+    result = await anyio.to_thread.run_sync(call)
+
+    assert result == {'a': 1}
+    assert api.patch_calls == [(Pod, 'pod', 'default', {'a': 1})]

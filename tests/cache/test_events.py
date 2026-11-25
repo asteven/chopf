@@ -1,5 +1,3 @@
-import pytest
-
 from chopf.cache import events
 
 

@@ -1,3 +1,5 @@
+from ..exceptions import Error
+from ..resources import identity
 from . import Store
 
 
@@ -15,9 +17,7 @@ def index_by_ip(obj):
             ips = [item.ip for item in pod_ips]
     except AttributeError as e:
         print(e)
-        pass
-    finally:
-        return ips
+    return ips
 
 
 class IndexView:
@@ -28,7 +28,7 @@ class IndexView:
 
     def __repr__(self):
         if self.resource:
-            return f'<IndexView {self.resource.apiVersion}/{self.resource.kind} {self.index_name}>'
+            return f'<IndexView {identity.gvk(self.resource)} {self.index_name}>'
         else:
             return f'<IndexView {self.index_name}>'
 
@@ -84,27 +84,27 @@ class Indexer(Store):
         if new:
             new_index_values = sorted(index_func(new))
 
-#        index = self._indices.get(name, None)
-#        print(f'''_update_single_index
-#   name: {name}
-#   old: {old}
-#   new: {new}
-#   key: {key}
-#   index: {index}
-#   old_index_values: {old_index_values}
-#   new_index_values: {new_index_values}
-#''')
+        #        index = self._indices.get(name, None)
+        #        print(f'''_update_single_index
+        #   name: {name}
+        #   old: {old}
+        #   new: {new}
+        #   key: {key}
+        #   index: {index}
+        #   old_index_values: {old_index_values}
+        #   new_index_values: {new_index_values}
+        #''')
 
         # Nothing changed, nothing to do.
         if new_index_values == old_index_values:
             return
         # We optimize for the most common case where indexFunc
         # returns a single value which has not been changed.
-        #if (
+        # if (
         #    len(new_index_values) == 1
         #    and len(old_index_values) == 1
         #    and new_index_values[0] == old_index_values[0]
-        #):
+        # ):
         #    return
 
         index = self._indices.get(name, None)
@@ -130,7 +130,7 @@ class Indexer(Store):
         old_keys = set(self._indexers.keys())
         new_keys = set(indexers.keys())
         if not old_keys.isdisjoint(new_keys):
-            raise Exception('indexer conflict: %s' % old_keys.intersection(new_keys))
+            raise Error(f'indexer conflict: {old_keys.intersection(new_keys)}')
         for name, indexer in indexers.items():
             self._indexers[name] = indexer
             # Ensure indicies exist, even if store is empty.
@@ -140,7 +140,7 @@ class Indexer(Store):
                 self._indices[name] = index
         # Re-index all items in the store.
         for key, value in self._items.items():
-            for name in indexers.keys():
+            for name in indexers:
                 self._update_single_index(name, None, value, key)
 
     def index(self, index_name):

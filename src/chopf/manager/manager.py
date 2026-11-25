@@ -1,35 +1,29 @@
 import functools
-import itertools
 import logging
 import platform
 import signal
-import sys
 import uuid
 
-import uvloop
 import anyio
-from anyio import open_signal_receiver
-from anyio import TASK_STATUS_IGNORED
-from anyio.abc import CancelScope, TaskStatus
-
+import uvloop
+from anyio import TASK_STATUS_IGNORED, CancelScope, open_signal_receiver
+from anyio.abc import TaskStatus
 from lightkube import AsyncClient as LightkubeAsyncClient
-from lightkube import Client as LightkubeSyncClient
-from lightkube.generic_resource import async_load_in_cluster_generic_resources, create_resources_from_crd
-from lightkube.core.resource_registry import resource_registry, LoadResourceError
+from lightkube.core.resource_registry import LoadResourceError, resource_registry
 
-
-import chopf
 from .. import exceptions
-from ..cache import Cache, Indexer, Informer
-from ..controller import Controller
-from ..client import AsyncClient, SyncClient
-from ..tasks import Task
-from ..resources import get_resource
 from ..builder import resource_rbac
+from ..cache import Cache, Indexer
+from ..client import AsyncClient, SyncClient
+from ..controller import Controller
+from ..observer import Observer
+from ..resources import custom_resource_registry, identity
+from ..tasks import Task
+from .builders import ControllerBuilder, InformerBuilder
 
-from .builders import ControllerBuilder, InformerBuilder, StoreBuilder
-from .controllers import CrdController, NamespaceController, LeaseController
-
+# Re-enable together with the LeaseController startup below.
+from .controllers import LeaseController  # noqa: F401
+from .system import InternalRuntime
 
 log = logging.getLogger(__name__)
 
@@ -57,12 +51,16 @@ class StreamReceiver(Task):
         self._streams = []
 
     def __hash__(self):
-        api_version = self.resource._api_info.resource.api_version
-        kind = self.resource._api_info.resource.kind
-        return hash((api_version, kind, self.handler))
+        return hash(
+            (
+                identity.api_version(self.resource),
+                identity.kind(self.resource),
+                self.handler,
+            )
+        )
 
     def __repr__(self):
-        return f'<StreamReceiver {self.resource.apiVersion}/{self.resource.kind} {self.handler}>'
+        return f'<StreamReceiver {identity.gvk(self.resource)} {self.handler}>'
 
     @property
     def stream(self):
@@ -108,40 +106,50 @@ class Manager:
         self.namespaces = None
         self.resources = set()
         self.debug = False
-        self.async_api_client = LightkubeAsyncClient()
-        self.sync_api_client = LightkubeSyncClient()
-        self.cache = Cache(
-            self.async_api_client,
-        )
-        self.async_client = AsyncClient(self.async_api_client, self.cache)
-        self.sync_client = SyncClient(self.sync_api_client, self.cache)
+        # Instrumentation seam; assign your own Observer before run().
+        self.observer = Observer()
+        # Runtime components (lightkube client, cache, client facades,
+        # internal runtime) are created when the operator actually
+        # starts — never at import: importing chopf (e.g. to generate
+        # CRD/RBAC manifests) must not require a kubeconfig, and nothing
+        # at import time may hold references to runtime components.
+        self.async_api_client = None
+        self.cache = None
+        self.async_client = None
+        self.sync_client = None
+        self.internal_runtime = None
+        # The store registry is pure data (resource -> Indexer): usable
+        # at import time for index registration, adopted by the Cache
+        # when it is created at runtime.
+        self._stores = {}
         self.is_active = False
         # The unique ID of this operator, used in leader election.
-        self.operator_id = '%s-%s' % (
-            platform.node(),
-            str(uuid.uuid4()).replace('-', '')[:10],
+        self.operator_id = (
+            f'{platform.node()}-{str(uuid.uuid4()).replace("-", "")[:10]}'
         )
         self._builders = {
             'controller': {},
             'informer': {},
-            'store': {},
         }
-        # The namespace this manager runs in.
-        self.manager_namespace = self.async_api_client.namespace
+        # The namespace this manager runs in (set in _setup_runtime).
+        self.manager_namespace = None
         self._active_namespaces = set()
         self._active_resources = set()
         self._controllers = {}
         self._stream_receivers = {}
+        # Custom resource registry; defaults to the process-wide registry
+        # that import-time decorators register into, injectable for tests.
+        self.custom_resources = custom_resource_registry
         self._main_task_group = None  # Main taskgroup
-        self._task_group = None # regular taskgroup
+        self._task_group = None  # regular taskgroup
         self._stop = None
         self._exit = anyio.Event()
 
     def __repr__(self):
         _id = id(self)
-        #namespaces = self._active_namespaces
+        # namespaces = self._active_namespaces
         namespaces = self.namespaces
-        resources = {'%s/%s' % (resource.apiVersion, resource.kind) for resource in self.resources}
+        resources = {identity.gvk(resource) for resource in self.resources}
         return f'<Manager {self.operator_id} namespaces: {namespaces} resources: {resources}>'
 
     def run(self, all_namespaces=False, namespaces=None, debug=False):
@@ -160,29 +168,29 @@ class Manager:
         if not namespace in self._active_namespaces:
             log.info('namespace_added: %s', namespace)
             self._active_namespaces.add(namespace)
-            await self.reconcile()
+            await self.sync_membership()
 
     async def remove_namespace(self, namespace):
         if namespace in self._active_namespaces:
             log.info('namespace_removed: %s', namespace)
             self._active_namespaces.remove(namespace)
-            await self.reconcile()
+            await self.sync_membership()
 
     async def add_resource(self, resource=None, version=None, kind=None):
         if resource is None:
             resource = resource_registry.load(version, kind)
         if not resource in self._active_resources:
-            log.info('resource_added: %s/%s', resource.apiVersion, resource.kind)
+            log.info('resource_added: %s', identity.gvk(resource))
             self._active_resources.add(resource)
-            await self.reconcile()
+            await self.sync_membership()
 
     async def remove_resource(self, resource=None, version=None, kind=None):
         if resource is None:
             resource = resource_registry.load(version, kind)
         if resource in self._active_resources:
-            log.info('resource_removed: %s/%s', resource.apiVersion, resource.kind)
+            log.info('resource_removed: %s', identity.gvk(resource))
             self._active_resources.remove(resource)
-            await self.reconcile()
+            await self.sync_membership()
 
     def stop(self):
         log.debug('stop %r', self)
@@ -203,8 +211,8 @@ class Manager:
             self.cache.namespaces = self._active_namespaces.copy()
         self.cache.resources = self._active_resources.copy()
 
-    async def reconcile(self, startup=False):
-        log.debug(f'reconcile: is_active: {self.is_active},  startup={startup}')
+    async def sync_membership(self, startup=False):
+        log.debug(f'sync_membership: is_active: {self.is_active},  startup={startup}')
         if not self.is_active and not startup:
             return
 
@@ -218,11 +226,13 @@ class Manager:
                 for stream_receiver in stream_receivers:
                     if not stream_receiver.is_running:
                         await self._task_group.start(stream_receiver)
-                        #self._task_group.start_soon(stream_receiver)
+                        # self._task_group.start_soon(stream_receiver)
                 for informer in self.cache.get_informers_by(resource=resource):
                     for stream_receiver in stream_receivers:
                         if not informer.has_stream(key=stream_receiver):
-                            informer.add_stream(stream_receiver.stream, key=stream_receiver)
+                            informer.add_stream(
+                                stream_receiver.stream, key=stream_receiver
+                            )
             else:
                 for stream_receiver in stream_receivers:
                     stream_receiver.stop()
@@ -234,7 +244,7 @@ class Manager:
                     await self._task_group.start(controller)
                 #    #self._task_group.start_soon(controller)
 
-                #for source in controller.event_sources:
+                # for source in controller.event_sources:
                 #    for informer in self.cache.get_informers_by(resource=source.resource):
                 #        if not informer.has_stream(key=source):
                 #            informer.add_stream(source.stream, key=source)
@@ -255,12 +265,14 @@ class Manager:
         # and ignore the ones which are not.
         for resource in self.resources:
             try:
-                resource_registry.load(resource.apiVersion, resource.kind)
+                resource_registry.load(
+                    identity.api_version(resource), identity.kind(resource)
+                )
                 await self.add_resource(resource)
-            except LoadResourceError as e:
-                log.warning('ignoring unusable resource: %s/%s',
-                    resource.apiVersion,
-                    resource.kind,
+            except LoadResourceError:
+                log.warning(
+                    'ignoring unusable resource: %s',
+                    identity.gvk(resource),
                 )
                 await self.remove_resource(resource)
 
@@ -278,13 +290,14 @@ class Manager:
                     # Initial cache config.
                     self.configure_cache()
 
-                    # Start the cache.
-                    tg.start_soon(self.cache)
+                    # Start the cache and wait until it is running, so
+                    # sync_membership can rely on its task group existing.
+                    await tg.start(self.cache)
 
                     # Initial reconcilation.
-                    tg.start_soon(self.reconcile, True)
+                    tg.start_soon(self.sync_membership, True)
 
-                    #log.debug('started %s', self)
+                    # log.debug('started %s', self)
                     log.info('started %s', self)
                     task_status.started()
 
@@ -301,43 +314,48 @@ class Manager:
         finally:
             log.info('stopped %s', self)
 
+    def _setup_runtime(self):
+        """Create the runtime components: lightkube client, cache and
+        client facades. Called when the operator actually starts
+        (Manager.run/__call__), never at import — importing chopf must
+        not require a kubeconfig."""
+        self.async_api_client = LightkubeAsyncClient()
+        # The cache adopts the store registry that was populated at
+        # import time via store()/get_store().
+        self.cache = Cache(self.async_api_client, stores=self._stores)
+        self.cache.observer = self.observer
+        self.async_client = AsyncClient(
+            self.async_api_client, self.cache, observer=self.observer
+        )
+        self.sync_client = SyncClient(self.async_client)
+        self.manager_namespace = self.async_api_client.namespace
+
     async def __call__(
         self, all_namespaces=False, namespaces=None, setup_signal_handler=False
     ):
+        self._setup_runtime()
         self.all_namespaces = all_namespaces
         if not self.all_namespaces:
             if namespaces is not None:
                 self.namespaces = set(namespaces)
             else:
-                self.namespaces = set([self.async_api_client.namespace])
+                self.namespaces = {self.async_api_client.namespace}
 
         log.debug('startup %s', self)
 
         for builder in self._builders['informer'].values():
             log.debug('creating stream receivers from informer builder: %r', builder)
-            for receiver in builder._stream_receivers:
-                stream_receiver = StreamReceiver(builder.resource, receiver)
+            spec = builder.to_spec()
+            for receiver in spec.stream_receivers:
+                stream_receiver = StreamReceiver(spec.resource, receiver)
                 self.add_stream_receiver(stream_receiver)
-
-        for builder in self._builders['store'].values():
-            log.debug('creating store from builder: %r', builder)
-            store = self.cache.get_store(builder.resource)
-            store.add_indexers(builder._kwargs['indexers'])
-            # The builder needs an instance so it can proxy to it at runtime.
-            builder._instance = store
 
         for builder in self._builders['controller'].values():
             log.debug('creating controller from builder: %r', builder)
-            controller = Controller(
-                self.async_client,
-                self.sync_client,
-                self.cache,
-                builder.resource,
-                **builder._kwargs,
-            )
-            # The builder needs an instance so it can proxy to it at runtime.
-            builder._instance = controller
-            self._controllers[builder.resource] = controller
+            self._materialize_controller(builder.to_spec())
+
+        self.internal_runtime = InternalRuntime(self)
+        self.internal_runtime._setup_controllers()
 
         try:
             async with anyio.create_task_group() as tg:
@@ -345,27 +363,12 @@ class Manager:
                 if setup_signal_handler:
                     tg.start_soon(signal_handler, tg.cancel_scope)
 
-                if not self.all_namespaces:
-                    # Start namespace controller.
-                    await tg.start(functools.partial(
-                        self._start_controller,
-                        NamespaceController,
-                        concurrent_reconciles=2,
-                    ))
-
-                # Start custom resource controller.
-                await tg.start(functools.partial(
-                    self._start_controller,
-                    CrdController,
-                    concurrent_reconciles=4,
-                ))
-
-                # Start leader election controller.
-                await tg.start(functools.partial(
-                    self._start_controller,
-                    LeaseController,
-                    namespace=self.manager_namespace,
-                ))
+                # Internal controllers first: they run with their own
+                # cache (no dependency on the shared one) and must be
+                # synced before the payload starts. In an HA setup a
+                # follower runs only this part — no shared cache, no
+                # user controllers.
+                await self.internal_runtime.start(tg)
 
                 tg.start_soon(self.start)
 
@@ -373,7 +376,7 @@ class Manager:
                 await self._exit.wait()
         except* exceptions.Error as eg:
             if self.debug:
-                raise eg
+                raise
             error_messages = []
             for error in exceptions.iterate_errors(eg):
                 error_messages.append(str(error))
@@ -381,67 +384,71 @@ class Manager:
 
         log.debug('exiting %s', self)
 
-    async def _start_controller(self, controller_class, concurrent_reconciles=1, namespace=None, task_status: TaskStatus[None] = TASK_STATUS_IGNORED):
-        """Start the given controller."""
-        controller = controller_class(
-            self,
-            self.async_client,
-            self.sync_client,
-            self.cache,
-            concurrent_reconciles=concurrent_reconciles,
-            wait_for_cache=False,
-        )
-        resource = controller.resource
-        #store = self.cache.get_store(resource)
-        store = Indexer()
-        informer = Informer(
-            self.async_api_client,
-            store,
-            resource,
-            namespace=namespace,
-        )
-
-        # Start the controller.
-        self._main_task_group.start_soon(controller)
-        await controller
-
-        # Connect the controllers sources to the informer.
-        for source in controller.event_sources:
-            if not informer.has_stream(key=source):
-                informer.add_stream(source.stream, key=source)
-
-        # Start the informer.
-        self._main_task_group.start_soon(informer)
-        await informer
-
-        ## Wait until all initial requests are processed.
-        while len(controller.queue) > 0:
-            await anyio.sleep(1)
-
-        task_status.started()
+    def _materialize_controller(self, spec):
+        """Construct a controller from a spec — one path for both the
+        builder front-end (plain callables) and the subclass front-end
+        (controller_class set, manager passed explicitly)."""
+        if spec.controller_class is not None:
+            controller = spec.controller_class(
+                self,
+                self.async_client,
+                self.sync_client,
+                self.cache,
+                spec.resource,
+                name=spec.name,
+                predicates=list(spec.predicates),
+                watches=list(spec.watches),
+                tasks=list(spec.tasks),
+                concurrent_reconciles=spec.concurrent_reconciles,
+                wait_for_cache=spec.wait_for_cache,
+                observer=self.observer,
+            )
+        else:
+            controller = Controller(
+                self.async_client,
+                self.sync_client,
+                self.cache,
+                spec.resource,
+                name=spec.name,
+                predicates=list(spec.predicates),
+                watches=list(spec.watches),
+                tasks=list(spec.tasks),
+                reconcile=spec.reconcile,
+                startup=spec.startup,
+                shutdown=spec.shutdown,
+                concurrent_reconciles=spec.concurrent_reconciles,
+                wait_for_cache=spec.wait_for_cache,
+                observer=self.observer,
+            )
+        self._controllers[spec.resource] = controller
+        return controller
 
     def register_resource(self, resource):
         # Register minimal read-only RBAC so the informers and clients which
         # will be working with the resource can do their job.
         resource_rbac(resource, verbs='get;list;watch')
-        resource = get_resource(resource)
         self.resources.add(resource)
 
-    def store(self, resource):
-        """Decorator that creates and returns a store builder."""
-        _builders = self._builders['store']
-        self.register_resource(resource)
-        return self.cache.get_store(resource)
+    def get_store(self, resource):
+        """The store for a resource, from the manager's registry.
 
-        key = resource
-        builder = _builders.get(key, None)
-        if builder is None:
-            builder = StoreBuilder(
-                self,
-                resource,
-            )
-            _builders[key] = builder
-        return builder
+        Works at import time (no cache needed): the registry is pure
+        data and is adopted by the Cache when it is created at runtime.
+        """
+        try:
+            return self._stores[resource]
+        except KeyError:
+            return self._stores.setdefault(resource, Indexer())
+
+    def store(self, resource):
+        """Register the resource and return its live store.
+
+        Stores are created eagerly at registration time, so indexers can
+        be registered directly on the returned store via its index
+        decorator.
+        """
+        self.register_resource(resource)
+        return self.get_store(resource)
 
     def controller(self, resource, name=None):
         """Decorator that creates and returns a controller builder."""

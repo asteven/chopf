@@ -1,29 +1,26 @@
-import dataclasses
 import functools
 import logging
-import typing
+import time
 
 import anyio
-from anyio import TASK_STATUS_IGNORED
-from anyio.abc import CancelScope, TaskStatus
-
-from lightkube.core import resource as lkr
+from anyio import TASK_STATUS_IGNORED, CancelScope
+from anyio.abc import TaskStatus
 from lightkube.models.meta_v1 import OwnerReference
 
-from ..tasks import Task
-from ..workqueue import Workqueue
-from ..source import EventSource
-from ..resources import get_resource
-from ..invocation import is_async_fn
 from ..exceptions import (
+    Error,
+    ObjectNotFound,
+    PermanentError,
     Requeue,
     TemporaryError,
-    PermanentError,
-    ObjectNotFound,
 )
-
+from ..invocation import is_async_fn
+from ..observer import Observer
+from ..resources import identity
+from ..source import EventSource
+from ..tasks import Task
+from ..workqueue import Workqueue
 from . import requests_from_event_for_object
-
 
 log = logging.getLogger(__name__)
 
@@ -32,81 +29,117 @@ class ReconcilerLoggerAdapter(logging.LoggerAdapter):
     """Prefixes the log message with reconcilers number"""
 
     def process(self, msg, kwargs):
-        reconciler = 'reconciler[%i]' % self.extra['num']
-        return '%s: %s' % (reconciler, msg), kwargs
+        reconciler = f'reconciler[{self.extra["num"]}]'
+        return f'{reconciler}: {msg}', kwargs
+
+
+def set_owner_reference(owner, subject, block_owner_deletion=False, controller=False):
+    """Append an OwnerReference for owner to the subjects metadata."""
+    if subject.metadata.ownerReferences is None:
+        subject.metadata.ownerReferences = []
+    if controller:
+        for existing_ref in subject.metadata.ownerReferences:
+            if existing_ref.controller:
+                raise Error(f'Allready owned by a controller: {existing_ref!r}')
+    ref = OwnerReference(
+        apiVersion=owner.apiVersion,
+        kind=owner.kind,
+        name=owner.metadata.name,
+        uid=owner.metadata.uid,
+        blockOwnerDeletion=block_owner_deletion,
+        controller=controller,
+    )
+    subject.metadata.ownerReferences.append(ref)
+    return ref
+
+
+def set_controller_reference(owner, subject):
+    """Set owner as the controlling OwnerReference of subject."""
+    return set_owner_reference(
+        owner,
+        subject,
+        block_owner_deletion=True,
+        controller=True,
+    )
 
 
 class Controller(Task):
-    async_client: object
-    sync_client: object
-    cache: object
-    resource: lkr.Resource
-    name: str = None
-    predicates: typing.List[typing.Callable] = dataclasses.field(default_factory=list)
-    watches: dict = dataclasses.field(default_factory=dict)
-    tasks: typing.List[typing.Callable] = dataclasses.field(default_factory=list)
-    reconcile: typing.Callable = None
-    startup: typing.Callable = None
-    shutdown: typing.Callable = None
-    concurrent_reconciles: int = None
-    wait_for_cache: bool = True
+    # Defaults; subclasses may override these with methods, builders
+    # inject them as constructor arguments.
+    reconcile = None
+    startup = None
+    shutdown = None
 
     @property
     def api_version(self) -> str:
-        return self.resource._api_info.resource.api_version
+        return identity.api_version(self.resource)
 
     @property
     def kind(self) -> str:
-        return self.resource._api_info.resource.kind
+        return identity.kind(self.resource)
 
-    def __init__(self, async_client, sync_client, cache, resource,
+    def __init__(
+        self,
+        async_client,
+        sync_client,
+        cache,
+        resource,
         name=None,
-        predicates=None, watches=None, tasks=None,
-        reconcile=None, startup=None, shutdown=None,
-        concurrent_reconciles=1, wait_for_cache=True):
+        predicates=None,
+        watches=None,
+        tasks=None,
+        reconcile=None,
+        startup=None,
+        shutdown=None,
+        concurrent_reconciles=1,
+        wait_for_cache=True,
+        observer=None,
+    ):
         super().__init__()
         self.async_client = async_client
         self.sync_client = sync_client
         self.cache = cache
         self.resource = resource
+        self.name = name
         self.predicates = predicates or []
-        self.watches = watches or {}
+        self.watches = list(watches or [])
         self.tasks = tasks or []
-        if reconcile:
+        if reconcile is not None:
             self.reconcile = reconcile
-        if startup:
+        if startup is not None:
             self.startup = startup
-        if shutdown:
+        if shutdown is not None:
             self.shutdown = shutdown
         self.concurrent_reconciles = concurrent_reconciles
         self.wait_for_cache = wait_for_cache
+        self.observer = observer or Observer()
 
         self._task_group = None  # Main taskgroup
         self._stop = anyio.Event()
-        self.resource = get_resource(self.resource)
         self._event_sources = []
         self.queue = Workqueue()
         self.lock = anyio.Lock()
 
         # Ensure we have a watch for the api_version/kind we are reconciling
         # if the user did not specify one explicitly.
-        if self.resource not in self.watches:
+        if not any(watch.resource == self.resource for watch in self.watches):
             self._add_event_source(self.resource, requests_from_event_for_object)
 
         # Create event sources for all our watches.
-        for watch in self.watches.values():
+        for watch in self.watches:
             self._add_event_source(
-                watch['resource'],
-                watch['handler'],
-                **watch['kwargs'],
+                watch.resource,
+                watch.handler,
+                **watch.kwargs,
             )
-
 
     def __repr__(self):
         if self.name is not None:
-            return f'<{self.__class__.__name__} {self.name} {self.resource.apiVersion}/{self.resource.kind}>'
+            return (
+                f'<{self.__class__.__name__} {self.name} {identity.gvk(self.resource)}>'
+            )
         else:
-            return f'<{self.__class__.__name__} {self.resource.apiVersion}/{self.resource.kind}>'
+            return f'<{self.__class__.__name__} {identity.gvk(self.resource)}>'
 
     @property
     def event_sources(self):
@@ -115,41 +148,18 @@ class Controller(Task):
     def set_owner_reference(
         self, owner, subject, block_owner_deletion=False, controller=False
     ):
-        # ref = metav1.OwnerReference{
-        #    APIVersion:         gvk.GroupVersion().String(),
-        #    Kind:               gvk.Kind,
-        #    Name:               owner.GetName(),
-        #    UID:                owner.GetUID(),
-        #    BlockOwnerDeletion: ptr.To(false),
-        #    Controller:         ptr.To(false),
-        # }
-        if subject.metadata.ownerReferences is None:
-            subject.metadata.ownerReferences = []
-        if controller:
-            for existing_ref in subject.metadata.ownerReferences:
-                if existing_ref.controller:
-                    raise Exception('Allready owned by a controller: %r', existing_ref)
-        ref = OwnerReference(
-            apiVersion=owner.apiVersion,
-            kind=owner.kind,
-            name=owner.metadata.name,
-            uid=owner.metadata.uid,
-            blockOwnerDeletion=block_owner_deletion,
-            controller=controller,
-        )
-        subject.metadata.ownerReferences.append(ref)
-        return ref
-
-    def set_controller_reference(self, owner, subject):
-        return self.set_owner_reference(
+        return set_owner_reference(
             owner,
             subject,
-            block_owner_deletion=True,
-            controller=True,
+            block_owner_deletion=block_owner_deletion,
+            controller=controller,
         )
 
+    def set_controller_reference(self, owner, subject):
+        return set_controller_reference(owner, subject)
+
     def _add_event_source(self, resource, handler, **kwargs):
-        #log.debug(f'_add_event_source {resource} {handler} {kwargs}')
+        # log.debug(f'_add_event_source {resource} {handler} {kwargs}')
         source = EventSource(
             self.queue,
             resource,
@@ -188,10 +198,12 @@ class Controller(Task):
         logger.debug('started')
         while True:
             logger.debug(self.queue)
-            #logger.info(self.queue)
+            # logger.info(self.queue)
             request = await self.queue.get(num)
             logger.debug('processing %r', request)
 
+            start = time.monotonic()
+            outcome = 'success'
             try:
                 if is_async_fn(self.reconcile):
                     await self.reconcile(self.async_client, request)
@@ -200,22 +212,26 @@ class Controller(Task):
                         self.reconcile, self.sync_client, request
                     )
             except ObjectNotFound as e:
+                outcome = 'not_found'
                 log.debug(e)
                 # If the object is not in our cache, there's no point to
                 # requeue the request. So we give up and forget about it.
                 await self.queue.forget(request)
             except PermanentError as e:
+                outcome = 'permanent'
                 log.error(e)
                 # The reconcile function signaled to us that it can not handle
                 # this request so we give up and forget about it.
                 await self.queue.forget(request)
             except TemporaryError as e:
+                outcome = 'temporary'
                 # Requeue this request after the requested delay.
                 logger.debug('requeuing with delay %i %r', e.delay, request)
                 request.retries += 1
                 await self.queue.forget(request)
                 await self.queue.add_after(request, e.delay)
             except Requeue as e:
+                outcome = 'requeue'
                 await self.queue.forget(request)
                 if e.after:
                     logger.debug('requeuing with delay %i %r', e.after, request)
@@ -223,9 +239,10 @@ class Controller(Task):
                 else:
                     logger.debug('requeuing %r', request)
                     await self.queue.add(request)
-            except Exception as e:
-                log.exception(e)
-                #raise e
+            except Exception:
+                outcome = 'error'
+                log.exception('error while processing request %r', request)
+                # raise e
                 # Unexpected error, log it and requeue with rate limiting.
                 logger.debug('requeuing with rate limiting %r', request)
                 request.retries = await self.queue.num_requeues(request)
@@ -234,6 +251,10 @@ class Controller(Task):
                 # Success! Forget about this request.
                 await self.queue.forget(request)
             finally:
+                duration = time.monotonic() - start
+                self.observer.on_reconcile(
+                    identity.gvk(self.resource), request, duration, outcome
+                )
                 # In any case, mark this request as done.
                 logger.debug('done processing %r', request)
                 await self.queue.done(request)
@@ -251,6 +272,23 @@ class Controller(Task):
             )
             await anyio.sleep(5)
 
+    async def wait_idle(self, settle=0.05):
+        """Wait until the work queue has drained: nothing queued, nothing
+        being processed.
+
+        Used to sequence startup phases: the manager starts the system
+        controllers first and waits for them to process the initial
+        cluster state before starting user controllers. The settle window
+        covers events that are still in flight from informer streams to
+        the queue — the queue must be observed idle twice in a row.
+        """
+        while True:
+            while not self.queue.idle:
+                await anyio.sleep(settle)
+            await anyio.sleep(settle)
+            if self.queue.idle:
+                return
+
     def stop(self):
         if self._task_group:
             log.debug('stop %r', self)
@@ -264,11 +302,12 @@ class Controller(Task):
                     if is_async_fn(task):
                         tg.start_soon(task, self.async_client)
                     else:
-                        tg.start_soon(anyio.to_thread.run_sync,
+                        tg.start_soon(
+                            anyio.to_thread.run_sync,
                             functools.partial(
                                 task,
                                 self.sync_client,
-                            )
+                            ),
                         )
 
     async def __call__(self, task_status: TaskStatus[None] = TASK_STATUS_IGNORED):
@@ -283,11 +322,13 @@ class Controller(Task):
 
                     for source in self._event_sources:
                         await tg.start(source)
-                        for informer in self.cache.get_informers_by(resource=source.resource):
+                        for informer in self.cache.get_informers_by(
+                            resource=source.resource
+                        ):
                             if not informer.has_stream(key=source):
                                 informer.add_stream(source.stream, key=source)
 
-                    #log.debug('started %s', self)
+                    # log.debug('started %s', self)
                     log.info('started %s', self)
                     # Inform any awaiters that we are ready.
                     task_status.started()

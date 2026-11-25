@@ -1,10 +1,8 @@
 import anyio
+from lightkube.resources.apps_v1 import ReplicaSet
+from lightkube.resources.core_v1 import Pod
 
 import chopf
-
-
-from lightkube.resources.core_v1 import Pod
-from lightkube.resources.apps_v1 import ReplicaSet
 
 # This controller reonciles ReplicaSets.
 repset = chopf.controller(ReplicaSet)
@@ -20,7 +18,7 @@ async def reconcile(client: chopf.Client, request: chopf.Request):
     try:
         obj = await client.get(request)
         print(f'   {obj}')
-    except chopf.ObjectNotFound as e:
+    except chopf.ObjectNotFound:
         print('   object no longer exists in cache')
 
     # Simulate waiting for something ...
@@ -29,4 +27,3 @@ async def reconcile(client: chopf.Client, request: chopf.Request):
 
 if __name__ == '__main__':
     chopf.run()
-

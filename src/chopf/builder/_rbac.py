@@ -1,14 +1,10 @@
-import yaml
 import re
 
-from lightkube.core import resource as lkr
-from lightkube.resources.rbac_authorization_v1 import ClusterRole, Role
 from lightkube.models.meta_v1 import ObjectMeta
 from lightkube.models.rbac_v1 import PolicyRule
+from lightkube.resources.rbac_authorization_v1 import ClusterRole, Role
 
-
-from ..resources import resources_to_yaml
-
+from ..resources import identity, resources_to_yaml
 
 _rbac_registry = {}
 
@@ -23,10 +19,16 @@ _rbac_registry = {}
 
 _roles = {}
 
-def resource_rbac(resource, subresources=None, verbs=None, resource_names=None,
-    namespace=None, urls=None,
+
+def resource_rbac(
+    resource,
+    subresources=None,
+    verbs=None,
+    resource_names=None,
+    namespace=None,
+    urls=None,
 ):
-    info = lkr.api_info(resource)
+    info = identity.api_info(resource)
     groups = [info.resource.group]
     resources = []
     if subresources:
@@ -48,8 +50,14 @@ def resource_rbac(resource, subresources=None, verbs=None, resource_names=None,
 
 
 # https://book.kubebuilder.io/reference/markers/rbac.html
-def rbac(resources=None, groups=None, verbs=None, resource_names=None,
-    namespace=None, urls=None, subresource=None,
+def rbac(
+    resources=None,
+    groups=None,
+    verbs=None,
+    resource_names=None,
+    namespace=None,
+    urls=None,
+    subresource=None,
 ):
 
     role = _roles.get(namespace, None)
@@ -71,8 +79,8 @@ def rbac(resources=None, groups=None, verbs=None, resource_names=None,
             )
         _roles[namespace] = role
 
-    #print(f'{role} {id(role)}')
-    #print(f'{role.rules}')
+    # print(f'{role} {id(role)}')
+    # print(f'{role.rules}')
 
     # TODO: maybe better to just only accept lists
     if isinstance(groups, str):
@@ -86,13 +94,15 @@ def rbac(resources=None, groups=None, verbs=None, resource_names=None,
 
     rule = None
     for existing_rule in role.rules:
-        if all((
-            (existing_rule.verbs == verbs),
-            (existing_rule.apiGroups == groups),
-            (existing_rule.nonResourceURLs == urls),
-            (existing_rule.resourceNames == resource_names),
-            (existing_rule.resources == resources),
-        )):
+        if all(
+            (
+                (existing_rule.verbs == verbs),
+                (existing_rule.apiGroups == groups),
+                (existing_rule.nonResourceURLs == urls),
+                (existing_rule.resourceNames == resource_names),
+                (existing_rule.resources == resources),
+            )
+        ):
             rule = existing_rule
             break
     if rule is None:
@@ -108,15 +118,7 @@ def rbac(resources=None, groups=None, verbs=None, resource_names=None,
 
 
 def print_rbac():
-    roles = []
-    name = 'chopf-manager-role'
-
-    role = list(_roles.values())[0]
-    #print(role.__class__)
-    #print(type(role))
-
     # TODO: possible optimization: merge rules which grant then same access.
     #       e.g all rules that have the same 'verbs'
     resources_yaml = resources_to_yaml(*_roles.values())
     print(resources_yaml)
-

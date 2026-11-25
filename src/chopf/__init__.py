@@ -1,13 +1,15 @@
 # All types a user would care about are made available in the top level package.
 # A user should never have to import anything from sub modules.
 
-from .exceptions import *  # noqa: F403 public API
-from .resources import *  # noqa: F403 public API
-from .cache import *  # noqa: F403 public API
-from .source import *  # noqa: F403 public API
-from .controller import *  # noqa: F403 public API
-from .client import *  # noqa: F403 public API
-from .builder import *  # noqa: F403 public API
+# ruff: noqa: I001 - import order matters here to avoid circular imports
+from .exceptions import *
+from .resources import *
+from .cache import *
+from .source import *
+from .controller import *
+from .client import *
+from .observer import *
+from .builder import *
 from .manager import Manager
 
 # Singleton manager instance.
@@ -23,11 +25,11 @@ store = manager.store
 
 
 def get_store(resource):
-    return manager.cache.get_store(resource)
+    return manager.get_store(resource)
 
 
 def get_index(resource, index_name):
-    store = manager.cache.get_store(resource)
+    store = manager.get_store(resource)
     return store.get_index(
         index_name,
         resource=resource,
@@ -49,4 +51,3 @@ def get_async_client():
 
 def get_sync_client():
     return manager.sync_client
-

@@ -1,9 +1,8 @@
 import time
 
-import chopf
-
 from lightkube.resources.core_v1 import Pod
 
+import chopf
 
 # This controller reonciles Pods.
 podctl = chopf.controller(Pod)
@@ -36,7 +35,7 @@ def reconcile(client: chopf.Client, request: chopf.Request):
         # Get the object we are reconciling from the cache.
         obj = client.get(request)
         print(f'   reconciled pod: {obj}')
-    except chopf.ObjectNotFound as e:
+    except chopf.ObjectNotFound:
         # Note that if we don't catch and handle this exception
         # it is handled by the controller by discarding the event,
         # as there is no point in requeing the object it's not in the cache.
@@ -46,4 +45,3 @@ def reconcile(client: chopf.Client, request: chopf.Request):
 
 if __name__ == '__main__':
     chopf.run()
-

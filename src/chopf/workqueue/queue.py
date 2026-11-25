@@ -3,12 +3,11 @@ from anyio import TASK_STATUS_IGNORED
 from anyio.abc import TaskStatus
 
 from ..tasks import Task
-
 from .limiters import (
-    RateLimiter,  # noqa: F401
-    MaxOfRateLimiter,
     BucketRateLimiter,
     ItemExponentialFailureRateLimiter,
+    MaxOfRateLimiter,
+    RateLimiter,  # noqa: F401
 )
 
 
@@ -54,10 +53,24 @@ class Workqueue(Task):
         print(f'    delayed:    {self._delayed}')
         print(f'    processing: {self._processing}')
         print(f'    dirty:      {self._dirty}')
-        print('')
+        print()
 
     def __len__(self):
         return len(self._queue)
+
+    @property
+    def processing(self):
+        """Number of items currently being processed by workers."""
+        return len(self._processing)
+
+    @property
+    def idle(self):
+        """Nothing queued and nothing being processed.
+
+        Delayed items (add_after/rate-limited retries) do not count:
+        they are backoff, not pending initial work.
+        """
+        return len(self) == 0 and self.processing == 0
 
     async def length(self):
         async with self._condition:
@@ -115,7 +128,7 @@ class Workqueue(Task):
             item = self._queue.pop()
             self._processing[item] = None
             del self._dirty[item]
-            #self._print_statistics()
+            # self._print_statistics()
             return item
 
     async def done(self, item):

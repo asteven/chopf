@@ -1,12 +1,10 @@
 import itertools
 import logging
 
-from ..resources import get_resource
-
-from ..invocation import nonblocking
-
 from lightkube.codecs import resource_registry
 
+from ..invocation import nonblocking
+from ..resources import identity
 
 log = logging.getLogger(__name__)
 
@@ -18,33 +16,34 @@ class Request:
     retries: int = 0
 
     def __init__(self, resource, name, namespace=None):
-        self.resource = get_resource(resource)
+        self.resource = resource
         self.name = name
         self.namespace = namespace
         self.retries = 0
 
+    # NB: self.resource is usually a resource *class*. Under msgspec,
+    # class-level field access returns member descriptors, so identity is
+    # always resolved via the identity helpers (api_info seam).
     @property
     def api_version(self) -> str:
-        return self.resource.apiVersion
+        return identity.api_version(self.resource)
 
     @property
     def kind(self) -> str:
-        return self.resource.kind
+        return identity.kind(self.resource)
 
     def __hash__(self):
-        return hash(
-            (self.resource.apiVersion, self.resource.kind, self.namespace, self.name)
-        )
+        return hash((self.api_version, self.kind, self.namespace, self.name))
 
     def __eq__(self, other):
         return (
-            self.resource.apiVersion,
-            self.resource.kind,
+            self.api_version,
+            self.kind,
             self.namespace,
             self.name,
         ) == (
-            other.resource.apiVersion,
-            other.resource.kind,
+            other.api_version,
+            other.kind,
             other.namespace,
             other.name,
         )
@@ -54,7 +53,9 @@ class Request:
             name = f'{self.namespace}/{self.name}'
         else:
             name = self.name
-        return f'<Request {self.resource.apiVersion}/{self.resource.kind} {name} retries: {self.retries}>'
+        return (
+            f'<Request {self.api_version}/{self.kind} {name} retries: {self.retries}>'
+        )
 
 
 @nonblocking
@@ -99,17 +100,13 @@ def request_for_owner(obj, owner=None):
         return
     namespace = obj.metadata.namespace
     name = obj.metadata.name
-    try:
-        refs = obj.metadata.ownerReferences
-        if refs:
-            for ref in refs:
-                if (
-                    ref.apiVersion == owner.apiVersion
-                    and ref.kind == owner.kind
-                    and ref.controller
-                ):
-                    name = ref.name
-                    yield Request(owner, name, namespace=namespace)
-    except AttributeError as e:
-        raise e
-        pass
+    refs = obj.metadata.ownerReferences
+    if refs:
+        for ref in refs:
+            if (
+                ref.apiVersion == identity.api_version(owner)
+                and ref.kind == identity.kind(owner)
+                and ref.controller
+            ):
+                name = ref.name
+                yield Request(owner, name, namespace=namespace)

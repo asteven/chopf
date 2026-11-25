@@ -1,3 +1,5 @@
+# ruff: noqa: I001 - import order matters: cache.py imports Indexer/Informer
+# from this package, so they must be imported before .cache
 from .events import (
     CreateEvent,
     UpdateEvent,

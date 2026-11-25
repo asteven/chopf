@@ -17,10 +17,11 @@ Multiple files/modules can be specified. They will be loaded in the order.
 import importlib
 import importlib.abc
 import importlib.util
-import pkgutil
 import os.path
+import pkgutil
 import sys
-from typing import Iterable, cast
+from collections.abc import Iterable
+from typing import cast
 
 
 def import_module(package_name):
@@ -36,8 +37,8 @@ def import_module(package_name):
 
 
 def preload(
-    paths: Iterable[str] = None,
-    modules: Iterable[str] = None,
+    paths: Iterable[str] | None = None,
+    modules: Iterable[str] | None = None,
 ) -> None:
     """
     Ensure the handlers are registered by loading/importing the files/modules.
