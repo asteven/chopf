@@ -1,4 +1,3 @@
-import dataclasses
 import yaml
 
 from .registry import (
@@ -6,7 +5,6 @@ from .registry import (
 )
 
 from .resources import (
-    get_resource,
     GenericStruct,
     GroupVersion,
     ObjectMeta,
@@ -18,7 +16,6 @@ __all__ = [
     'crd',
     'custom_resource_registry',
     'GenericStruct',
-    'get_resource',
     'GroupVersion',
     'ObjectMeta',
     'PartialObjectMetadata',
@@ -34,16 +31,25 @@ def is_same_version(o1, o2):
     )
 
 
-def _no_empty_value_dict(items, **kwargs):
-    """Helper function that returns dicts
-    that don't have empty values.
-    """
-    return dict(
-        [(k, v) for k, v in items if v], **{k: v for k, v in kwargs.items() if v}
-    )
-
-
 _resource_key_order = ['apiVersion', 'kind', 'metadata', 'spec', 'status']
+
+
+def _drop_empty_values(value):
+    """Recursively drop keys with empty values (None, []).
+
+    Empty dicts are kept — they can be semantic in kubernetes manifests
+    (e.g. ``subresources: {status: {}}`` enables the status subresource).
+    False and 0 are kept for the same reason (e.g. ``served: false``).
+    """
+    if isinstance(value, dict):
+        return {
+            k: _drop_empty_values(v)
+            for k, v in value.items()
+            if v is not None and v != []
+        }
+    if isinstance(value, list):
+        return [_drop_empty_values(v) for v in value]
+    return value
 
 
 def _resources_as_dicts(*objects):
@@ -53,7 +59,12 @@ def _resources_as_dicts(*objects):
     """
     dicts = []
     for obj in objects:
-        tmp = dataclasses.asdict(obj, dict_factory=_no_empty_value_dict)
+        if hasattr(obj, 'to_dict'):
+            tmp = obj.to_dict()
+        else:
+            # dict-based generic resources and plain dicts
+            tmp = dict(obj)
+        tmp = _drop_empty_values(tmp)
         keys = dict.fromkeys(_resource_key_order + list(tmp.keys()))
         dicts.append({k: tmp[k] for k in keys if k in tmp})
     return dicts

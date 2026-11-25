@@ -75,7 +75,7 @@ async def reconcile(
     pod.metadata.name = request.name
     pod.metadata.namespace = request.namespace
     # Set controller and owner reference.
-    chaos_ctl.set_controller_reference(chaos_pod, pod)
+    chopf.set_controller_reference(chaos_pod, pod)
     pod = await client.create(pod)
 
     # Update chaospod status

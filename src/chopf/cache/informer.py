@@ -7,16 +7,17 @@ import typing
 import anyio
 from anyio import TASK_STATUS_IGNORED
 from anyio.abc import TaskStatus
-import httpx
+import httpx2
 
 from lightkube.core import resource as lkr
 
 import lightkube
 
 from ..exceptions import HttpError
+from ..observer import Observer
 from ..tasks import Task
 from ..invocation import invoke
-from ..resources import is_same_version
+from ..resources import is_same_version, identity
 from . import CreateEvent, UpdateEvent, DeleteEvent
 
 
@@ -47,17 +48,20 @@ class Informer(Task):
     timeout: int = 60
     transformer: typing.Callable = None
     resource_version: str = None
+    observer: Observer = None
 
     @property
     def api_version(self) -> str:
-        return self.resource._api_info.resource.api_version
+        return identity.api_version(self.resource)
 
     @property
     def kind(self) -> str:
-        return self.resource._api_info.resource.kind
+        return identity.kind(self.resource)
 
     def __post_init__(self):
         super().__init__()
+        if self.observer is None:
+            self.observer = Observer()
         self._task_group = None  # Main taskgroup
         self._stop = anyio.Event()
         self._streams = {}
@@ -229,7 +233,7 @@ class Informer(Task):
                 #print(e.status)
                 #print(e.request)
                 #print(e.response)
-            except httpx.HTTPStatusError as e:
+            except httpx2.HTTPStatusError as e:
                 log.error(f'HTTP error while listing/watching {self.api_version}/{self.kind}')
                 log.error(e)
                 await anyio.sleep(3)
@@ -257,6 +261,7 @@ class Informer(Task):
                     await self._delete(obj)
                 case 'ERROR':
                     await self._error(obj)
+            self.observer.on_watch_event(identity.gvk(self.resource), event)
             # self.resource_version = obj.metadata.resourceVersion
         except Exception as e:
             # TODO: use a more explicit Exception subclass?

@@ -4,11 +4,12 @@ import logging
 
 from anyio import TASK_STATUS_IGNORED
 from anyio.abc import TaskStatus
-from lightkube.core import resource as lkr
 
 from ..tasks import Task
-from ..resources import get_resource, PartialObjectMetadata
+from ..resources import PartialObjectMetadata, identity
 from ..exceptions import ObjectNotFound
+from ..observer import Observer
+from ..membership import InformerRef, plan_informers, ref_for
 from . import Informer, Indexer
 
 
@@ -27,14 +28,10 @@ log = logging.getLogger(__name__)
 ALL_NAMESPACES = set(['*'])
 
 
-def is_namespaced_resource(resource):
-    return issubclass(resource, (lkr.NamespacedResource, lkr.NamespacedSubResource))
-
-
 class Cache(Task):
     #def __init__(self, api_client, all_namespaces=False,
     #        namespaces=None, resources=None):
-    def __init__(self, api_client):
+    def __init__(self, api_client, stores=None):
         super().__init__()
         self.api_client = api_client
         #self._all_namespaces = all_namespaces
@@ -48,12 +45,16 @@ class Cache(Task):
         self._stop = anyio.Event()
         self._synced = anyio.Event()
         self._registered_resources = set()
-        self._stores = {}
+        # Store registry; the manager's import-time registry is adopted
+        # when given (indexers registered before the cache exists).
+        self._stores = stores if stores is not None else {}
         self._informers = []
+        # Instrumentation hooks, propagated to informers created here.
+        self.observer = Observer()
 
     def __repr__(self):
         _id = id(self)
-        resources = {f'{r.apiVersion}/{r.kind}' for r in self._resources}
+        resources = {identity.gvk(r) for r in self._resources}
         return f'<Cache {_id} namespaces: {self.namespaces} resources: {resources}>'
 
     @property
@@ -105,39 +106,46 @@ class Cache(Task):
 
     def reconcile_informers(self):
         self._synced = anyio.Event()
-        # Remove obsolete informers.
-        current_informers = self._informers.copy()
-        for informer in current_informers:
-            if is_namespaced_resource(informer.resource):
-                if informer.namespace not in self.namespaces \
-                        or informer.resource not in self.resources:
-                    self.remove_informer(informer)
-            else:
-                if informer.resource not in self.resources:
-                    self.remove_informer(informer)
+        resource_classes = {ref_for(resource): resource for resource in self.resources}
+        if self._all_namespaces:
+            namespaces = frozenset()
+        else:
+            namespaces = frozenset(self._namespaces)
+        current = frozenset(
+            InformerRef(ref_for(informer.resource), informer.namespace)
+            for informer in self._informers
+        )
+        plan = plan_informers(
+            frozenset(resource_classes),
+            namespaces,
+            current,
+            all_namespaces=self._all_namespaces,
+        )
 
-        # Create required informers.
-        for resource in self.resources:
-            if is_namespaced_resource(resource):
-                # Ensure required namespaced informers exist.
-                for namespace in self.namespaces:
-                    informer = self.get_informer(resource, namespace=namespace)
-            else:
-                # Ensure required global informers exist.
-                informer = self.get_informer(resource)
+        # Remove obsolete informers.
+        for informer in self._informers.copy():
+            ref = InformerRef(ref_for(informer.resource), informer.namespace)
+            if ref in plan.stop:
+                self.remove_informer(informer)
+
+        # Create required informers. They are started in reconcile().
+        for ref in plan.start:
+            resource = resource_classes[ref.resource]
+            self.get_informer(resource, namespace=ref.namespace)
 
     async def reconcile(self):
-#        print(f'''
-#cache namespaces: {self.namespaces}
-#       informers: {self._informers}
-#       resources: {self.resources}
-#         reg-res: {self._registered_resources}
-#''')
-        # Ensure all informers are running.
+        if self._task_group is None:
+            # The cache is not running: informers cannot start, so we
+            # must not report the cache as synced. Controllers would
+            # reconcile against an empty store.
+            log.warning('reconcile called on a cache that is not running')
+            return
+        # Ensure all informers are running. Note that task_group.start()
+        # returns after the informer's initial list has completed, so
+        # setting synced here means the stores are actually populated.
         for informer in self._informers:
             if not informer.is_running:
-                if self._task_group:
-                    await self._task_group.start(informer)
+                await self._task_group.start(informer)
         self._synced.set()
 
     def add_informer(self, informer):
@@ -150,7 +158,6 @@ class Cache(Task):
         self._informers.remove(informer)
 
     def register_resource(self, resource):
-        resource = get_resource(resource)
         self._registered_resources.add(resource)
         if resource not in self._resources:
             # Should never happen.
@@ -168,7 +175,7 @@ class Cache(Task):
 
     def get_informers_by(self, resource=None, namespace=None):
         #log.debug(f'get_informers_by: {resource} {namespace}')
-        if self._all_namespaces and is_namespaced_resource(resource):
+        if self._all_namespaces and identity.is_namespaced(resource):
             namespace = '*'
         informers = [
             informer
@@ -185,7 +192,7 @@ class Cache(Task):
 
     def get_informer(self, resource, namespace=None, create=True):
         #log.debug(f'get_informer: {resource} {namespace}')
-        if self._all_namespaces and is_namespaced_resource(resource):
+        if self._all_namespaces and identity.is_namespaced(resource):
             namespace = '*'
         informer = None
         try:
@@ -201,6 +208,7 @@ class Cache(Task):
                     self.get_store(resource),
                     resource,
                     namespace=namespace,
+                    observer=self.observer,
                 )
                 self.add_informer(informer)
         return informer

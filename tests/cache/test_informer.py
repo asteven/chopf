@@ -24,7 +24,7 @@ def pod_factory():
 async def test_informer_adds_object_and_dispatches_create_event(pod_factory):
     store = Indexer()
     informer = Informer(api_client=object(), store=store, resource=Pod, namespace='default')
-    tx, rx = anyio.create_memory_object_stream(1)
+    tx, rx = anyio.create_memory_object_stream(10)
     informer.add_stream(tx)
 
     pod = pod_factory('foo')
@@ -40,7 +40,7 @@ async def test_informer_adds_object_and_dispatches_create_event(pod_factory):
 async def test_informer_updates_object_and_dispatches_update_event(pod_factory):
     store = Indexer()
     informer = Informer(api_client=object(), store=store, resource=Pod, namespace='default')
-    tx, rx = anyio.create_memory_object_stream(1)
+    tx, rx = anyio.create_memory_object_stream(10)
     informer.add_stream(tx)
 
     pod_v1 = pod_factory('foo', version='1')
@@ -62,7 +62,7 @@ async def test_informer_updates_object_and_dispatches_update_event(pod_factory):
 async def test_informer_delete_dispatches_delete_event(pod_factory):
     store = Indexer()
     informer = Informer(api_client=object(), store=store, resource=Pod, namespace='default')
-    tx, rx = anyio.create_memory_object_stream(1)
+    tx, rx = anyio.create_memory_object_stream(10)
     informer.add_stream(tx)
 
     pod = pod_factory('foo')

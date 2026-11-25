@@ -1,7 +1,7 @@
 import itertools
 import logging
 
-from ..resources import get_resource
+from ..resources import identity
 
 from ..invocation import nonblocking
 
@@ -18,33 +18,36 @@ class Request:
     retries: int = 0
 
     def __init__(self, resource, name, namespace=None):
-        self.resource = get_resource(resource)
+        self.resource = resource
         self.name = name
         self.namespace = namespace
         self.retries = 0
 
+    # NB: self.resource is usually a resource *class*. Under msgspec,
+    # class-level field access returns member descriptors, so identity is
+    # always resolved via the identity helpers (api_info seam).
     @property
     def api_version(self) -> str:
-        return self.resource.apiVersion
+        return identity.api_version(self.resource)
 
     @property
     def kind(self) -> str:
-        return self.resource.kind
+        return identity.kind(self.resource)
 
     def __hash__(self):
         return hash(
-            (self.resource.apiVersion, self.resource.kind, self.namespace, self.name)
+            (self.api_version, self.kind, self.namespace, self.name)
         )
 
     def __eq__(self, other):
         return (
-            self.resource.apiVersion,
-            self.resource.kind,
+            self.api_version,
+            self.kind,
             self.namespace,
             self.name,
         ) == (
-            other.resource.apiVersion,
-            other.resource.kind,
+            other.api_version,
+            other.kind,
             other.namespace,
             other.name,
         )
@@ -54,7 +57,7 @@ class Request:
             name = f'{self.namespace}/{self.name}'
         else:
             name = self.name
-        return f'<Request {self.resource.apiVersion}/{self.resource.kind} {name} retries: {self.retries}>'
+        return f'<Request {self.api_version}/{self.kind} {name} retries: {self.retries}>'
 
 
 @nonblocking
@@ -104,8 +107,8 @@ def request_for_owner(obj, owner=None):
         if refs:
             for ref in refs:
                 if (
-                    ref.apiVersion == owner.apiVersion
-                    and ref.kind == owner.kind
+                    ref.apiVersion == identity.api_version(owner)
+                    and ref.kind == identity.kind(owner)
                     and ref.controller
                 ):
                     name = ref.name

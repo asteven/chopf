@@ -52,7 +52,7 @@ def test_store_replace_and_clear():
     store = Store()
 
     store.replace(pods)
-    assert set(store.values()) == set(pods)
+    assert list(store.values()) == pods
 
     store.clear()
     assert list(store.values()) == []

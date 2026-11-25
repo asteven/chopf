@@ -1,67 +1,62 @@
-import functools
-import collections
+"""Import-time collectors for declarative specs.
+
+Builders are the user-facing decorator API. They exist only to collect
+frozen specs (see chopf.specs); they never reference runtime instances.
+The manager materializes specs into running components.
+"""
 import logging
 
-from ..controller import requests_from_event_for_owner
 from ..builder import resource_rbac
-
+from ..controller import requests_from_event_for_owner
+from ..specs import ControllerSpec, InformerSpec, WatchSpec
 
 log = logging.getLogger(__name__)
 
 
-class Builder:
-    """A Builder is used to collect information at import time
-    that is later used to create actual instances at runtime.
-    """
+def _parens_optional(register, func=None):
+    """Support both @decorator and @decorator() forms."""
 
+    def decorator(f):
+        register(f)
 
-class StoreBuilder(Builder):
-    def __init__(self, manager, resource) -> None:
-        self.manager = manager
-        self.resource = resource
-        self._kwargs = {
-            'indexers': {},
-        }
-        self._instance = None
-
-    def __getattr__(self, key):
-        # proxy to Store instance
-        return getattr(self._instance, key)
-
-    def __iter__(self):
-        return iter(self._instance)
-
-    def index(self, index_name):
-        """Decorator that registers an indexer function with the given name."""
-
-        def decorator(f):
-            self._kwargs['indexers'].update({index_name: f})
-
+    if func is None:
+        # Called as @decorator() with parens.
         return decorator
+    # Called as @decorator without parens.
+    return decorator(func)
 
 
-class ControllerBuilder(Builder):
+class ControllerBuilder:
+    """Collects a ControllerSpec via decorators at import time."""
+
     def __init__(self, manager, resource, name=None) -> None:
         self.manager = manager
         self.resource = resource
-        self._kwargs = {
-            'name': name,
-            'predicates': [],
-            'tasks': [],
-            'watches': {},
-            'startup': None,
-            'shutdown': None,
-            'reconcile': None,
-            'concurrent_reconciles': 1,
-        }
-        self._instance = None
+        self.name = name
+        self._reconcile = None
+        self._concurrent_reconciles = 1
+        self._predicates = []
+        self._watches = []
+        self._tasks = []
+        self._startup = None
+        self._shutdown = None
         # Register minimal RBAC for this controller to work with his
         # primary resource.
         resource_rbac(resource, verbs='get;list;watch')
 
-    def __getattr__(self, key):
-        # proxy to Controller instance
-        return getattr(self._instance, key)
+    def to_spec(self) -> ControllerSpec:
+        """Return the frozen spec collected so far."""
+        return ControllerSpec(
+            resource=self.resource,
+            name=self.name,
+            reconcile=self._reconcile,
+            predicates=tuple(self._predicates),
+            watches=tuple(self._watches),
+            tasks=tuple(self._tasks),
+            startup=self._startup,
+            shutdown=self._shutdown,
+            concurrent_reconciles=self._concurrent_reconciles,
+        )
 
     @property
     def store(self):
@@ -76,11 +71,7 @@ class ControllerBuilder(Builder):
 
     def _add_watch(self, resource, handler, **kwargs):
         self.manager.register_resource(resource)
-        self._kwargs['watches'][resource] = {
-            'resource': resource,
-            'handler': handler,
-            'kwargs': kwargs,
-        }
+        self._watches.append(WatchSpec(resource, handler, kwargs))
 
     def watch_owner(self, resource):
         """Function that registers a watch for the given resource
@@ -100,6 +91,7 @@ class ControllerBuilder(Builder):
         """
         # Register minimal RBAC for watch to work.
         resource_rbac(resource, verbs='get;list;watch')
+
         def decorator(f):
             self._add_watch(resource, f)
 
@@ -110,16 +102,7 @@ class ControllerBuilder(Builder):
         All registered predicates must return True for a request to be added
         to the workqueue for reconcilation.
         """
-
-        def decorator(f):
-            self._kwargs['predicates'].append(f)
-
-        if func is None:
-            # We're called as @decorator() with parens.
-            return decorator
-        else:
-            # We're called as @decorator without parens.
-            return decorator(func)
+        return _parens_optional(self._predicates.append, func)
 
     def index(self, index_name):
         """Decorator that registers an indexer with this controllers store."""
@@ -128,76 +111,48 @@ class ControllerBuilder(Builder):
 
     def startup(self, func=None, /):
         """Decorator that registers an startup function with this controller."""
-        existing = self._kwargs.get('startup', None)
-        if callable(existing):
+        if callable(self._startup):
             raise Exception(
-                f'Controller already has a startup function registered: {existing}'
+                f'Controller already has a startup function registered: {self._startup}'
             )
+        return _parens_optional(self._set_startup, func)
 
-        def decorator(f):
-            self._kwargs['startup'] = f
-
-        if func is None:
-            # We're called as @decorator() with parens.
-            return decorator
-        else:
-            # We're called as @decorator without parens.
-            return decorator(func)
+    def _set_startup(self, f):
+        self._startup = f
 
     def shutdown(self, func=None, /):
         """Decorator that registers an shutdown function with this controller."""
-        existing = self._kwargs.get('shutdown', None)
-        if callable(existing):
+        if callable(self._shutdown):
             raise Exception(
-                f'Controller already has a shutdown function registered: {existing}'
+                f'Controller already has a shutdown function registered: {self._shutdown}'
             )
+        return _parens_optional(self._set_shutdown, func)
 
-        def decorator(f):
-            self._kwargs['shutdown'] = f
-
-        if func is None:
-            # We're called as @decorator() with parens.
-            return decorator
-        else:
-            # We're called as @decorator without parens.
-            return decorator(func)
+    def _set_shutdown(self, f):
+        self._shutdown = f
 
     def task(self, func=None, /):
         """Decorator that registers a background task function with this controller.
         Async tasks are run in the main loop while sync tasks are run in a thread pool.
         """
-
-        def decorator(f):
-            self._kwargs['tasks'].append(f)
-
-        if func is None:
-            # We're called as @decorator() with parens.
-            return decorator
-        else:
-            # We're called as @decorator without parens.
-            return decorator(func)
+        return _parens_optional(self._tasks.append, func)
 
     def reconcile(self, func=None, /, *, concurrency=1):
         """Decorator that registers a reconcile function with this controller."""
-        existing = self._kwargs.get('reconcile', None)
-        if callable(existing):
+        if callable(self._reconcile):
             raise Exception(
-                f'Controller already has a reconcile function registered: {existing}'
+                f'Controller already has a reconcile function registered: {self._reconcile}'
             )
-        self._kwargs['concurrent_reconciles'] = concurrency
+        self._concurrent_reconciles = concurrency
+        return _parens_optional(self._set_reconcile, func)
 
-        def decorator(f):
-            self._kwargs['reconcile'] = f
-
-        if func is None:
-            # We're called as @decorator() with parens.
-            return decorator
-        else:
-            # We're called as @decorator without parens.
-            return decorator(func)
+    def _set_reconcile(self, f):
+        self._reconcile = f
 
 
-class InformerBuilder(Builder):
+class InformerBuilder:
+    """Collects an InformerSpec via decorators at import time."""
+
     def __init__(
         self,
         manager,
@@ -208,18 +163,22 @@ class InformerBuilder(Builder):
     ) -> None:
         self.manager = manager
         self.resource = resource
-        self._kwargs = {
-            'name': name,
-            'resync_after': resync_after,
-            'timeout': timeout,
-            'transformer': None,
-        }
-        self._instance = None
+        self.name = name
+        self.resync_after = resync_after
+        self.timeout = timeout
+        self._transformer = None
         self._stream_receivers = []
 
-    #def __getattr__(self, key):
-    #    # proxy to Informer instance
-    #    return getattr(self._instance, key)
+    def to_spec(self) -> InformerSpec:
+        """Return the frozen spec collected so far."""
+        return InformerSpec(
+            resource=self.resource,
+            name=self.name,
+            resync_after=self.resync_after,
+            timeout=self.timeout,
+            transformer=self._transformer,
+            stream_receivers=tuple(self._stream_receivers),
+        )
 
     @property
     def store(self):
@@ -234,16 +193,7 @@ class InformerBuilder(Builder):
 
     def stream(self, func=None, /):
         """Decorator that registers a stream receiver with this informer."""
-
-        def decorator(f):
-            self._stream_receivers.append(f)
-
-        if func is None:
-            # We're called as @decorator() with parens.
-            return decorator
-        else:
-            # We're called as @decorator without parens.
-            return decorator(func)
+        return _parens_optional(self._stream_receivers.append, func)
 
     def index(self, index_name):
         """Decorator that registers an indexer function with this informer."""
@@ -252,13 +202,7 @@ class InformerBuilder(Builder):
 
     def transform(self, func=None, /):
         """Decorator that registers a transformer function with this informer."""
+        return _parens_optional(self._set_transformer, func)
 
-        def decorator(f):
-            self._kwargs['transformer'] = f
-
-        if func is None:
-            # We're called as @decorator() with parens.
-            return decorator
-        else:
-            # We're called as @decorator without parens.
-            return decorator(func)
+    def _set_transformer(self, f):
+        self._transformer = f

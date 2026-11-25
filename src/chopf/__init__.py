@@ -7,6 +7,7 @@ from .cache import *  # noqa: F403 public API
 from .source import *  # noqa: F403 public API
 from .controller import *  # noqa: F403 public API
 from .client import *  # noqa: F403 public API
+from .observer import *  # noqa: F403 public API
 from .builder import *  # noqa: F403 public API
 from .manager import Manager
 
@@ -23,11 +24,11 @@ store = manager.store
 
 
 def get_store(resource):
-    return manager.cache.get_store(resource)
+    return manager.get_store(resource)
 
 
 def get_index(resource, index_name):
-    store = manager.cache.get_store(resource)
+    store = manager.get_store(resource)
     return store.get_index(
         index_name,
         resource=resource,

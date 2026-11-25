@@ -59,6 +59,20 @@ class Workqueue(Task):
     def __len__(self):
         return len(self._queue)
 
+    @property
+    def processing(self):
+        """Number of items currently being processed by workers."""
+        return len(self._processing)
+
+    @property
+    def idle(self):
+        """Nothing queued and nothing being processed.
+
+        Delayed items (add_after/rate-limited retries) do not count:
+        they are backoff, not pending initial work.
+        """
+        return len(self) == 0 and self.processing == 0
+
     async def length(self):
         async with self._condition:
             return len(self._queue)

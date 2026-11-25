@@ -99,14 +99,14 @@ def _run(
 def _crd(
     ctx: typer.Context,
     modules: Annotated[List[str], typer.Option()] = None,
-    #paths: Annotated[List[pathlib.Path], typer.Argument()] = None,
+    paths: Annotated[List[pathlib.Path], typer.Argument()] = None,
 ) -> None:
 
     sys.path.insert(0, os.getcwd())
     modules = modules or []
-    #paths = paths or []
+    paths = paths or []
     loaders.preload(
-        #paths=paths,
+        paths=paths,
         modules=modules,
     )
 
@@ -123,14 +123,14 @@ def _crd(
 def _rbac(
     ctx: typer.Context,
     modules: Annotated[List[str], typer.Option()] = None,
-    #paths: Annotated[List[pathlib.Path], typer.Argument()] = None,
+    paths: Annotated[List[pathlib.Path], typer.Argument()] = None,
 ) -> None:
 
     sys.path.insert(0, os.getcwd())
     modules = modules or []
-    #paths = paths or []
+    paths = paths or []
     loaders.preload(
-        #paths=paths,
+        paths=paths,
         modules=modules,
     )
 

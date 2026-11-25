@@ -1,5 +1,6 @@
-from lightkube.core import resource as lkr
 from lightkube.core.exceptions import ApiError
+
+from .resources import identity
 
 __all__ = [
     'ApiError',
@@ -95,9 +96,8 @@ class ApiObjectNotFound(ObjectNotFound):
         self.namespace = namespace
 
     def __repr__(self):
-        info = lkr.api_info(self.resource)
-        kind = info.resource.kind
-        api_version = info.resource.api_version
+        kind = identity.kind(self.resource)
+        api_version = identity.api_version(self.resource)
         namespace = self.namespace
         name = self.name
         out = []

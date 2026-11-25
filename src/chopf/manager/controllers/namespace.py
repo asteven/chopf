@@ -4,13 +4,21 @@ import anyio
 from lightkube.resources.core_v1 import Namespace
 
 import chopf
+from ...builder import resource_rbac
 from ...controller import Controller
 
 
+# Registered at import time — see crd.py for why.
+resource_rbac(Namespace, verbs='get;list;watch')
+
+
 class NamespaceController(Controller):
+    resource = Namespace
+    concurrent_reconciles = 2
+
     def __init__(self, manager, *args, **kwargs):
         self.manager = manager
-        super().__init__(*args, Namespace, **kwargs)
+        super().__init__(*args, **kwargs)
 
     async def reconcile(self,
         client: chopf.Client, request: chopf.Request

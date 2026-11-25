@@ -1,4 +1,5 @@
 from . import Store
+from ..resources import identity
 
 
 def index_by_namespace(obj):
@@ -28,7 +29,7 @@ class IndexView:
 
     def __repr__(self):
         if self.resource:
-            return f'<IndexView {self.resource.apiVersion}/{self.resource.kind} {self.index_name}>'
+            return f'<IndexView {identity.gvk(self.resource)} {self.index_name}>'
         else:
             return f'<IndexView {self.index_name}>'
 

@@ -1,7 +1,7 @@
 import yaml
 import re
 
-from lightkube.core import resource as lkr
+from ..resources import identity
 from lightkube.resources.rbac_authorization_v1 import ClusterRole, Role
 from lightkube.models.meta_v1 import ObjectMeta
 from lightkube.models.rbac_v1 import PolicyRule
@@ -26,7 +26,7 @@ _roles = {}
 def resource_rbac(resource, subresources=None, verbs=None, resource_names=None,
     namespace=None, urls=None,
 ):
-    info = lkr.api_info(resource)
+    info = identity.api_info(resource)
     groups = [info.resource.group]
     resources = []
     if subresources:

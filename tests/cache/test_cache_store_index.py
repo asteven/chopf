@@ -5,7 +5,8 @@ from lightkube.core import resource as lkr
 from lightkube.models.meta_v1 import ObjectMeta
 from lightkube.resources.core_v1 import Pod
 
-from chopf.cache.cache import Cache, ALL_NAMESPACES, is_namespaced_resource
+from chopf.cache.cache import Cache, ALL_NAMESPACES
+from chopf.resources import identity
 
 
 def build_pod(name: str, namespace: str | None = None):
@@ -85,4 +86,31 @@ async def test_cache_resources_setter_clears_removed_resource_store():
 
 
 def test_is_namespaced_resource():
-    assert is_namespaced_resource(Pod)
+    assert identity.is_namespaced(Pod)
+
+
+@pytest.mark.anyio
+async def test_cache_list_returns_deepcopies():
+    """Mutating objects returned by cache.list must not corrupt the store."""
+    cache = Cache(DummyApiClient())
+    store = cache.get_store(Pod)
+    store.add(build_pod('p1', 'ns1'))
+
+    listed = await cache.list(Pod, namespace='ns1')
+    listed[0].metadata.name = 'MUTATED'
+
+    fresh = await cache.list(Pod, namespace='ns1')
+    assert fresh[0].metadata.name == 'p1'
+
+
+@pytest.mark.anyio
+async def test_cache_reconcile_without_task_group_is_not_synced():
+    """If the cache is not running, informers cannot start, so reconcile()
+    must not report the cache as synced (controllers would reconcile
+    against an empty store)."""
+    cache = Cache(DummyApiClient())
+    assert cache._task_group is None
+
+    await cache.reconcile()
+
+    assert not cache._synced.is_set()

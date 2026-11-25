@@ -5,14 +5,36 @@ from lightkube.core.resource_registry import resource_registry
 from lightkube.generic_resource import create_resources_from_crd
 
 import chopf
+from ...builder import resource_rbac
 from ...controller import Controller
-from ...resources import custom_resource_registry
+
+
+# RBAC for the internal controllers is registered at import time: the
+# `chopf rbac` command only considers import-time side effects, anything
+# registered at manager start time would be missing from the generated
+# roles.
+resource_rbac(CustomResourceDefinition, verbs='get;list;watch')
+
+
+def crd_is_ready(crd: CustomResourceDefinition) -> bool:
+    """A CRD is ready when all its conditions are 'True'.
+
+    Condition status is the string 'True'/'False'/'Unknown' — never
+    check it for truthiness.
+    """
+    conditions = crd.status.conditions
+    if not conditions:
+        return False
+    return all(condition.status == 'True' for condition in conditions)
 
 
 class CrdController(Controller):
+    resource = CustomResourceDefinition
+    concurrent_reconciles = 4
+
     def __init__(self, manager, *args, **kwargs):
         self.manager = manager
-        super().__init__(*args, CustomResourceDefinition, **kwargs)
+        super().__init__(*args, **kwargs)
 
     async def reconcile(self,
         client: chopf.Client, request: chopf.Request
@@ -24,21 +46,14 @@ class CrdController(Controller):
             await self.remove_crd(crd)
             return
 
-        ready = False
-        if crd.status.conditions:
-            ready = True
-            for condition in crd.status.conditions:
-                if not condition.status:
-                    # We need all conditions to be true.
-                    ready = False
-                    break
-        if ready:
+        if crd_is_ready(crd):
             await self.add_crd(crd)
 
     async def add_crd(self, crd: CustomResourceDefinition):
         # Prefer explicit custom resources over lightkube's generic resources.
-        if crd in custom_resource_registry:
-            for resource in custom_resource_registry.get_resources(crd):
+        registry = self.manager.custom_resources
+        if crd in registry:
+            for resource in registry.get_resources(crd):
                 if resource in self.manager.resources:
                     resource_registry.register(resource)
                     #if self.manager.is_active:

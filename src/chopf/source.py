@@ -16,6 +16,7 @@ from lightkube.core import resource as lkr
 
 from .tasks import Task
 from .invocation import invoke
+from .resources import identity
 
 if TYPE_CHECKING:
     from .controller.request import Request
@@ -53,14 +54,16 @@ class EventSource(Task):
             self.kwargs = {}
 
     def __repr__(self) -> str:
-        api_version = self.resource._api_info.resource.api_version
-        kind = self.resource._api_info.resource.kind
-        return f'<{self.__class__.__name__} {api_version}/{kind}>'
+        return f'<{self.__class__.__name__} {identity.gvk(self.resource)}>'
 
     def __hash__(self) -> int:
-        api_version = self.resource._api_info.resource.api_version
-        kind = self.resource._api_info.resource.kind
-        return hash((api_version, kind, self.handler))
+        return hash(
+            (
+                identity.api_version(self.resource),
+                identity.kind(self.resource),
+                self.handler,
+            )
+        )
 
     async def event_stream_handler(self) -> None:
         if self._rx is None:

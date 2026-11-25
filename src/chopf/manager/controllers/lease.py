@@ -12,9 +12,12 @@ from ...controller import Controller
 
 # WIP, not finished, not working
 class LeaseController(Controller):
+    resource = Lease
+    wait_for_cache = False
+
     def __init__(self, manager, *args, **kwargs):
         self.manager = manager
-        super().__init__(*args, Lease, **kwargs)
+        super().__init__(*args, **kwargs)
 
     async def startup(self, client: chopf.Client):
         #print('lease controller start')
