@@ -1,29 +1,23 @@
 import dataclasses
 import typing as t
-
 from dataclasses import dataclass
 from typing import dataclass_transform
 
 import msgspec
-
-from lightkube.core.schema import DictMixin
 from lightkube.core import resource as lkr
 from lightkube.core.resource_registry import resource_registry
-
+from lightkube.core.schema import DictMixin
+from lightkube.models.apiextensions_v1 import (
+    CustomResourceColumnDefinition,
+    CustomResourceDefinitionNames,
+    CustomResourceDefinitionSpec,
+)
 from lightkube.resources.apiextensions_v1 import (
     CustomResourceDefinition,
 )
 
-from lightkube.models.apiextensions_v1 import (
-    CustomResourceDefinitionNames,
-    CustomResourceDefinitionSpec,
-    CustomResourceColumnDefinition,
-)
-
-
-from .registry import custom_resource_registry
 from . import Resource
-
+from .registry import custom_resource_registry
 
 _resource_verbs = [
     'delete',
@@ -186,7 +180,6 @@ def resource(
             else:
                 plural = f'{singular}s'
 
-        api_version = f'{group}/{version}' if group else version
         # Identity fields default to None, exactly like lightkube's own
         # resources: the client fills them from _api_info on write
         # (prepare_request) and the server payload carries them on read.
@@ -206,9 +199,7 @@ def resource(
             bases = (Resource, lkr.GlobalResource, ModelMixin)
         else:
             bases = (Resource, lkr.NamespacedResourceG, ModelMixin)
-        _Resource = _struct_from_model(
-            kind, model, bases, extra_fields=identity_fields
-        )
+        _Resource = _struct_from_model(kind, model, bases, extra_fields=identity_fields)
         # Create lightkube api-info.
         _Resource._api_info = lkr.ApiInfo(
             resource=lkr.ResourceDef(group, version, kind),
@@ -282,7 +273,7 @@ def resource(
 
         # Register the resource with lightkube.
         # TODO: removed this in favour of crd_observer in manager.
-        #resource_registry.register(_Resource)
+        # resource_registry.register(_Resource)
         _ = resource_registry
 
         # Return the resource in place of the decorated class.

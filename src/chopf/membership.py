@@ -8,11 +8,10 @@ Everything here is pure — no anyio, no lightkube client, no I/O — so the
 core of the manager's dynamic behavior is unit-testable in isolation.
 Controllers reconcile; the manager *plans membership*.
 """
+
 from __future__ import annotations
 
 import dataclasses
-import typing as t
-
 
 ALL_NAMESPACES = '*'
 
@@ -31,7 +30,7 @@ class InformerRef:
     """Hashable identity of an informer: a resource in a namespace."""
 
     resource: ResourceRef
-    namespace: t.Optional[str]
+    namespace: str | None
 
 
 @dataclasses.dataclass(frozen=True)

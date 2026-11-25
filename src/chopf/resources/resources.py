@@ -85,4 +85,4 @@ class PartialObjectMetadata(GenericStruct):
     def __init__(self, name, namespace=None):
         if name is None:
             raise TypeError('PartialObjectMetadata: name can not be None')
-        super().__init__(**{'metadata': {'name': name, 'namespace': namespace}})
+        super().__init__(metadata={'name': name, 'namespace': namespace})

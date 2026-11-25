@@ -3,11 +3,11 @@
 Seam under test: get_schema(dc) — the function CRD generation relies on.
 These pin current behavior so CRD/schema work can be refactored safely.
 """
+
 import datetime
 import enum
-import typing as t
 from dataclasses import dataclass, field
-from typing import Annotated, Literal, Optional
+from typing import Annotated, Literal
 
 from lightkube.models.util_intstr import IntOrString
 
@@ -68,6 +68,7 @@ def test_nested_dataclass_is_inlined():
 
 def test_metadata_property_is_reduced_to_plain_object():
     schema = get_schema(Outer)
+
     # get_schema always rewrites metadata, even if not present as field.
     @dataclass
     class WithMeta:
@@ -85,7 +86,7 @@ def test_field_types():
         b: bool = False
         i: int = 0
         f: float = 0.0
-        maybe: Optional[int] = None
+        maybe: int | None = None
         lit: Literal['a', 'b'] = 'a'
         dt: datetime.datetime = None
         d: datetime.date = None

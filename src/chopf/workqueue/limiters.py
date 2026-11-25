@@ -3,8 +3,6 @@ import math
 import sys
 import time
 
-from typing import Dict, List
-
 
 class RateLimiter:
     # Interface
@@ -21,7 +19,7 @@ class RateLimiter:
 
 @dataclasses.dataclass(init=False)
 class MaxOfRateLimiter:
-    limiters: List[RateLimiter]
+    limiters: list[RateLimiter]
 
     def __init__(self, *args):
         self.limiters = args
@@ -84,7 +82,7 @@ class BucketRateLimiter(RateLimiter):
 
 @dataclasses.dataclass
 class ItemExponentialFailureRateLimiter(RateLimiter):
-    items: Dict[object, int] = dataclasses.field(default_factory=dict, init=False)
+    items: dict[object, int] = dataclasses.field(default_factory=dict, init=False)
     base_delay: float = 0.005  # 5 Milliseconds
     max_delay: float = 1000  # 1000 Seconds
 

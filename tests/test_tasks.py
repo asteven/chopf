@@ -1,4 +1,5 @@
 import anyio
+import anyio.lowlevel
 import pytest
 
 from chopf.tasks import ExampleTask, Task
@@ -23,13 +24,14 @@ async def test_example_task_lifecycle() -> None:
     task = ExampleTask()
 
     async with anyio.create_task_group() as tg:
+
         async def start_example():
             await task()
 
         tg.start_soon(start_example)
-        await anyio.sleep(0)
+        await anyio.lowlevel.checkpoint()
         assert task.is_running
 
         tg.cancel_scope.cancel()
-        await anyio.sleep(0)
+        await anyio.lowlevel.checkpoint()
         assert not task.is_running

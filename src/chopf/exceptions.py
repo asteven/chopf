@@ -4,12 +4,12 @@ from .resources import identity
 
 __all__ = [
     'ApiError',
+    'ApiObjectNotFound',
     'Error',
     'FatalError',
     'HttpError',
     'ObjectError',
     'ObjectNotFound',
-    'ApiObjectNotFound',
     'PermanentError',
     'Requeue',
     'StoreKeyError',
@@ -47,8 +47,8 @@ class Error(Exception):
 
 
 class HttpError(Error):
-    """An error that occured on the transport level while talking to the api.
-    """
+    """An error that occured on the transport level while talking to the api."""
+
     def __init__(self, http_method, url, status_code, message=None):
         self.http_method = http_method
         self.url = url
@@ -59,9 +59,7 @@ class HttpError(Error):
         if self.message:
             return self.message
         else:
-            return '{0} to {1} failed with status: {2}'.format(
-                self.http_method, self.url, self.status_code
-            )
+            return f'{self.http_method} to {self.url} failed with status: {self.status_code}'
 
 
 class ObjectError(Error):

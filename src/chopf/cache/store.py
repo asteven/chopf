@@ -38,7 +38,7 @@ class Store:
         del self._items[key]
 
     def __iter__(self):
-        #return iter(self.items())
+        # return iter(self.items())
         return iter(self.values())
 
     def items(self):

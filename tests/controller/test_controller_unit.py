@@ -6,7 +6,13 @@ from lightkube.models.meta_v1 import ObjectMeta, OwnerReference
 from lightkube.resources.core_v1 import Pod
 
 from chopf.controller import Controller, Request
-from chopf.exceptions import ObjectNotFound, PermanentError, Requeue, TemporaryError
+from chopf.exceptions import (
+    Error,
+    ObjectNotFound,
+    PermanentError,
+    Requeue,
+    TemporaryError,
+)
 
 
 class DummyInformer:
@@ -277,7 +283,9 @@ async def test_set_controller_reference_conflict():
     owner = Pod(metadata=ObjectMeta(name='owner', namespace='default', uid='uid'))
     subject = Pod(metadata=ObjectMeta(name='child', namespace='default'))
     subject.metadata.ownerReferences = [
-        OwnerReference(apiVersion='v1', kind='Pod', name='other', uid='1', controller=True)
+        OwnerReference(
+            apiVersion='v1', kind='Pod', name='other', uid='1', controller=True
+        )
     ]
 
     controller = Controller(
@@ -288,5 +296,5 @@ async def test_set_controller_reference_conflict():
         reconcile=lambda c, r: None,
     )
 
-    with pytest.raises(Exception):
+    with pytest.raises(Error):
         controller.set_controller_reference(owner, subject)

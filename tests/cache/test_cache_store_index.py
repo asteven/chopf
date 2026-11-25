@@ -1,11 +1,8 @@
-import copy
-
 import pytest
-from lightkube.core import resource as lkr
 from lightkube.models.meta_v1 import ObjectMeta
 from lightkube.resources.core_v1 import Pod
 
-from chopf.cache.cache import Cache, ALL_NAMESPACES
+from chopf.cache.cache import Cache
 from chopf.resources import identity
 
 

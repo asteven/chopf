@@ -1,31 +1,26 @@
 import functools
 import logging
 import time
-import typing
 
 import anyio
-from anyio import TASK_STATUS_IGNORED
-from anyio import CancelScope
+from anyio import TASK_STATUS_IGNORED, CancelScope
 from anyio.abc import TaskStatus
-
-from lightkube.core import resource as lkr
 from lightkube.models.meta_v1 import OwnerReference
 
-from ..tasks import Task
-from ..workqueue import Workqueue
-from ..source import EventSource
-from ..observer import Observer
-from ..resources import identity
-from ..invocation import is_async_fn
 from ..exceptions import (
+    Error,
+    ObjectNotFound,
+    PermanentError,
     Requeue,
     TemporaryError,
-    PermanentError,
-    ObjectNotFound,
 )
-
+from ..invocation import is_async_fn
+from ..observer import Observer
+from ..resources import identity
+from ..source import EventSource
+from ..tasks import Task
+from ..workqueue import Workqueue
 from . import requests_from_event_for_object
-
 
 log = logging.getLogger(__name__)
 
@@ -34,20 +29,18 @@ class ReconcilerLoggerAdapter(logging.LoggerAdapter):
     """Prefixes the log message with reconcilers number"""
 
     def process(self, msg, kwargs):
-        reconciler = 'reconciler[%i]' % self.extra['num']
-        return '%s: %s' % (reconciler, msg), kwargs
+        reconciler = f'reconciler[{self.extra["num"]}]'
+        return f'{reconciler}: {msg}', kwargs
 
 
-def set_owner_reference(
-    owner, subject, block_owner_deletion=False, controller=False
-):
+def set_owner_reference(owner, subject, block_owner_deletion=False, controller=False):
     """Append an OwnerReference for owner to the subjects metadata."""
     if subject.metadata.ownerReferences is None:
         subject.metadata.ownerReferences = []
     if controller:
         for existing_ref in subject.metadata.ownerReferences:
             if existing_ref.controller:
-                raise Exception('Allready owned by a controller: %r', existing_ref)
+                raise Error(f'Allready owned by a controller: {existing_ref!r}')
     ref = OwnerReference(
         apiVersion=owner.apiVersion,
         kind=owner.kind,
@@ -85,11 +78,23 @@ class Controller(Task):
     def kind(self) -> str:
         return identity.kind(self.resource)
 
-    def __init__(self, async_client, sync_client, cache, resource,
+    def __init__(
+        self,
+        async_client,
+        sync_client,
+        cache,
+        resource,
         name=None,
-        predicates=None, watches=None, tasks=None,
-        reconcile=None, startup=None, shutdown=None,
-        concurrent_reconciles=1, wait_for_cache=True, observer=None):
+        predicates=None,
+        watches=None,
+        tasks=None,
+        reconcile=None,
+        startup=None,
+        shutdown=None,
+        concurrent_reconciles=1,
+        wait_for_cache=True,
+        observer=None,
+    ):
         super().__init__()
         self.async_client = async_client
         self.sync_client = sync_client
@@ -128,10 +133,11 @@ class Controller(Task):
                 **watch.kwargs,
             )
 
-
     def __repr__(self):
         if self.name is not None:
-            return f'<{self.__class__.__name__} {self.name} {identity.gvk(self.resource)}>'
+            return (
+                f'<{self.__class__.__name__} {self.name} {identity.gvk(self.resource)}>'
+            )
         else:
             return f'<{self.__class__.__name__} {identity.gvk(self.resource)}>'
 
@@ -153,7 +159,7 @@ class Controller(Task):
         return set_controller_reference(owner, subject)
 
     def _add_event_source(self, resource, handler, **kwargs):
-        #log.debug(f'_add_event_source {resource} {handler} {kwargs}')
+        # log.debug(f'_add_event_source {resource} {handler} {kwargs}')
         source = EventSource(
             self.queue,
             resource,
@@ -192,7 +198,7 @@ class Controller(Task):
         logger.debug('started')
         while True:
             logger.debug(self.queue)
-            #logger.info(self.queue)
+            # logger.info(self.queue)
             request = await self.queue.get(num)
             logger.debug('processing %r', request)
 
@@ -233,10 +239,10 @@ class Controller(Task):
                 else:
                     logger.debug('requeuing %r', request)
                     await self.queue.add(request)
-            except Exception as e:
+            except Exception:
                 outcome = 'error'
-                log.exception(e)
-                #raise e
+                log.exception('error while processing request %r', request)
+                # raise e
                 # Unexpected error, log it and requeue with rate limiting.
                 logger.debug('requeuing with rate limiting %r', request)
                 request.retries = await self.queue.num_requeues(request)
@@ -296,11 +302,12 @@ class Controller(Task):
                     if is_async_fn(task):
                         tg.start_soon(task, self.async_client)
                     else:
-                        tg.start_soon(anyio.to_thread.run_sync,
+                        tg.start_soon(
+                            anyio.to_thread.run_sync,
                             functools.partial(
                                 task,
                                 self.sync_client,
-                            )
+                            ),
                         )
 
     async def __call__(self, task_status: TaskStatus[None] = TASK_STATUS_IGNORED):
@@ -315,11 +322,13 @@ class Controller(Task):
 
                     for source in self._event_sources:
                         await tg.start(source)
-                        for informer in self.cache.get_informers_by(resource=source.resource):
+                        for informer in self.cache.get_informers_by(
+                            resource=source.resource
+                        ):
                             if not informer.has_stream(key=source):
                                 informer.add_stream(source.stream, key=source)
 
-                    #log.debug('started %s', self)
+                    # log.debug('started %s', self)
                     log.info('started %s', self)
                     # Inform any awaiters that we are ready.
                     task_status.started()

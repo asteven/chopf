@@ -7,12 +7,12 @@ import chopf
 
 from .resource import ChaosPod
 
-
 # A controller that reconciles ChaosPod's.
 chaos_ctl = chopf.controller(ChaosPod)
 
 # Also watch for Pod's that are owned by this controller.
 chaos_ctl.watch_owner(Pod)
+
 
 # Register a async predicate.
 @chaos_ctl.predicate()
@@ -26,9 +26,7 @@ async def ignore_updates(event):
 
 # Asynchronous reconcile function.
 @chaos_ctl.reconcile()
-async def reconcile(
-    client: chopf.Client, request: chopf.Request
-):
+async def reconcile(client: chopf.Client, request: chopf.Request):
     print(f'reconcile: {request}')
 
     # Get the chaospod we're currently reconciling.
@@ -41,11 +39,11 @@ async def reconcile(
     try:
         # If our child pod exists, check if it's time to delete it.
         pod = await client.get(Pod, name=request.name, namespace=request.namespace)
-        now = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0)
+        now = datetime.datetime.now(datetime.UTC).replace(microsecond=0)
         if chaos_pod.status.nextStop:
             if chaos_pod.status.nextStop < now:
                 print('  deleting pod')
-                print('')
+                print()
                 try:
                     await client.delete(
                         Pod, name=pod.metadata.name, namespace=pod.metadata.namespace
@@ -60,7 +58,7 @@ async def reconcile(
                 print(f'    nextStop: {chaos_pod.status.nextStop}')
                 delta = chaos_pod.status.nextStop - now + datetime.timedelta(seconds=1)
                 print(f'    delta: {delta}')
-                print('')
+                print()
                 raise chopf.Requeue(after=delta.total_seconds())
     except chopf.ObjectNotFound:
         # Our child pod does not exist, we will create it below.
@@ -80,13 +78,13 @@ async def reconcile(
 
     # Update chaospod status
     print('  updating chaospod')
-    now = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0)
+    now = datetime.datetime.now(datetime.UTC).replace(microsecond=0)
     lifetime = chaos_pod.spec.lifetime
     chaos_pod.status.nextStop = now + datetime.timedelta(seconds=lifetime)
     chaos_pod.status.lastRun = pod.metadata.creationTimestamp
     chaos_pod = await client.update(chaos_pod)
     print('  after updating chaospod')
-    print('')
+    print()
 
 
 if __name__ == '__main__':

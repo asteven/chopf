@@ -1,13 +1,9 @@
-from typing import Union
-
-from lightkube.resources.apiextensions_v1 import (
-    CustomResourceDefinition,
-)
-
 from lightkube.models.apiextensions_v1 import (
     CustomResourceDefinitionVersion,
 )
-
+from lightkube.resources.apiextensions_v1 import (
+    CustomResourceDefinition,
+)
 
 from . import identity
 from .schema import get_schema
@@ -30,7 +26,6 @@ def _crd_name(crd: CustomResourceDefinition) -> str:
 
 
 class CustomResourceRegistry:
-
     ResourceNotFoundError = ResourceNotFoundError
     ResourceVersionNotFoundError = ResourceVersionNotFoundError
 
@@ -79,9 +74,7 @@ class CustomResourceRegistry:
             self._versions[key] = crd_version
         return crd_version
 
-    def get_crd(
-        self, resource_class_or_name: Union[str, type]
-    ) -> CustomResourceDefinition:
+    def get_crd(self, resource_class_or_name: str | type) -> CustomResourceDefinition:
         if isinstance(resource_class_or_name, str):
             name = resource_class_or_name
         else:
@@ -103,5 +96,5 @@ class CustomResourceRegistry:
             crds.append(crd)
         return crds
 
-custom_resource_registry = CustomResourceRegistry()
 
+custom_resource_registry = CustomResourceRegistry()

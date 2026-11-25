@@ -4,6 +4,7 @@ Seam under test: plan_informers() — given the desired set of resources
 and namespaces and the currently running informers, which informers must
 start and which must stop? Pure in, pure out: no anyio, no lightkube.
 """
+
 from chopf.membership import (
     ALL_NAMESPACES,
     InformerRef,
@@ -75,7 +76,9 @@ def test_no_change_plans_nothing():
 def test_extra_desired_pins_informer_for_unmanaged_resource():
     """System resources are not part of membership, but their informers
     can be pinned explicitly (e.g. the Lease in the manager namespace)."""
-    lease = ResourceRef(api_version='coordination.k8s.io/v1', kind='Lease', namespaced=True)
+    lease = ResourceRef(
+        api_version='coordination.k8s.io/v1', kind='Lease', namespaced=True
+    )
     pinned = InformerRef(lease, 'manager-ns')
     result = plan([], ['a'], extra_desired=[pinned])
     assert result.start == {pinned}
@@ -85,7 +88,9 @@ def test_extra_desired_pins_informer_for_unmanaged_resource():
 
 
 def test_unpinned_extra_desired_is_stopped():
-    lease = ResourceRef(api_version='coordination.k8s.io/v1', kind='Lease', namespaced=True)
+    lease = ResourceRef(
+        api_version='coordination.k8s.io/v1', kind='Lease', namespaced=True
+    )
     pinned = InformerRef(lease, 'manager-ns')
     result = plan([], ['a'], current=[pinned], extra_desired=[])
     assert result.stop == {pinned}

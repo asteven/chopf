@@ -3,6 +3,7 @@
 Kubernetes condition status is the *string* "True"/"False"/"Unknown" —
 truthiness checks on it are always wrong.
 """
+
 import types
 
 import pytest
@@ -73,9 +74,7 @@ class ManagerStub:
         self.removed = []
         # Pre-register the CRD and a resource class for it.
         self.custom_resources.add(crd)
-        self.custom_resources.register_resource(
-            crd, crd.spec.versions[0], Pod
-        )
+        self.custom_resources.register_resource(crd, crd.spec.versions[0], Pod)
 
     async def add_resource(self, resource):
         self.added.append(resource)

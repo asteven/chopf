@@ -1,6 +1,6 @@
-import anyio
 import random
 
+import anyio
 from lightkube.resources.core_v1 import Pod
 
 import chopf
@@ -18,11 +18,13 @@ async def reconcile(client: chopf.Client, request: chopf.Request):
     print(f'   retries: {request.retries} {request.namespace}/{request.name}')
 
     # Randomly simulate exceptions.
-    exception = random.choice((
-        None,
-        chopf.TemporaryError('Retry in 5 seconds.', delay=5),
-        chopf.Error('An unexpected error occured.'),
-    ))
+    exception = random.choice(
+        (
+            None,
+            chopf.TemporaryError('Retry in 5 seconds.', delay=5),
+            chopf.Error('An unexpected error occured.'),
+        )
+    )
 
     if exception is not None:
         raise exception
@@ -32,4 +34,3 @@ async def reconcile(client: chopf.Client, request: chopf.Request):
 
 if __name__ == '__main__':
     chopf.run()
-

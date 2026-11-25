@@ -8,6 +8,7 @@ Seams under test:
   runtime's own cache and clients — never the manager's shared cache —
   so a follower can run them without paying for the leader payload.
 """
+
 import importlib
 
 import pytest
@@ -18,9 +19,9 @@ manager_mod = importlib.import_module('chopf.manager.manager')
 builders_mod = importlib.import_module('chopf.manager.builders')
 system_mod = importlib.import_module('chopf.manager.system')
 
-from chopf.controller import Controller  # noqa: E402
-from chopf.manager.controllers import CrdController, NamespaceController  # noqa: E402
-from chopf.specs import ControllerSpec  # noqa: E402
+from chopf.controller import Controller
+from chopf.manager.controllers import CrdController
+from chopf.specs import ControllerSpec
 
 
 class DummyCache:

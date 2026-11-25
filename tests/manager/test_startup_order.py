@@ -8,6 +8,7 @@ Seams under test:
   (manager.start) is scheduled.
 - Controller.wait_idle: the drain primitive itself.
 """
+
 import importlib
 
 import anyio
@@ -18,7 +19,7 @@ from lightkube.resources.core_v1 import Namespace, Pod
 manager_mod = importlib.import_module('chopf.manager.manager')
 system_mod = importlib.import_module('chopf.manager.system')
 
-from chopf.controller import Controller, Request  # noqa: E402
+from chopf.controller import Controller, Request
 
 
 class DummyCache:
@@ -95,13 +96,13 @@ async def test_internal_runtime_start_sequence(manager, monkeypatch):
     cache_events = ['cache_start', 'reconcile_informers']
     controller_starts = [f'controller_start:{id(c)}' for c in controllers]
     drains = [f'wait_idle:{id(c)}' for c in controllers]
-    assert events == (
-        cache_events + controller_starts + ['cache_reconcile'] + drains
-    )
+    assert events == (cache_events + controller_starts + ['cache_reconcile'] + drains)
 
 
 @pytest.mark.anyio
-async def test_manager_call_starts_internal_runtime_before_payload(manager, monkeypatch):
+async def test_manager_call_starts_internal_runtime_before_payload(
+    manager, monkeypatch
+):
     """Manager.__call__: internal runtime is awaited before the payload
     (manager.start) is scheduled."""
     events = []

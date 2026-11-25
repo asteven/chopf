@@ -4,6 +4,7 @@ Seam under test: the decorator API used at import time
 (``chopf.controller()``, ``chopf.informer()``, ``chopf.store()``) and the
 frozen spec objects the manager materializes runtime components from.
 """
+
 import dataclasses
 import importlib
 

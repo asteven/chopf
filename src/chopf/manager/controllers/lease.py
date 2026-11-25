@@ -1,12 +1,8 @@
-import logging
-
-import anyio
-
-from lightkube.resources.coordination_v1 import Lease
 from lightkube.models.coordination_v1 import LeaseSpec  # noqa: F401
-
+from lightkube.resources.coordination_v1 import Lease
 
 import chopf
+
 from ...controller import Controller
 
 
@@ -20,13 +16,11 @@ class LeaseController(Controller):
         super().__init__(*args, **kwargs)
 
     async def startup(self, client: chopf.Client):
-        #print('lease controller start')
+        # print('lease controller start')
         # TODO: create lease object if it does not yet exist
         pass
 
-    async def reconcile(self,
-        client: chopf.Client, request: chopf.Request
-    ):
+    async def reconcile(self, client: chopf.Client, request: chopf.Request):
         print(f'reconcile: {request}')
         # TODO: start or stop things based on who the leader is
 

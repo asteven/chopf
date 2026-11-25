@@ -1,17 +1,16 @@
-import anyio
 import copy
 import logging
 
+import anyio
 from anyio import TASK_STATUS_IGNORED
 from anyio.abc import TaskStatus
 
-from ..tasks import Task
-from ..resources import PartialObjectMetadata, identity
-from ..exceptions import ObjectNotFound
-from ..observer import Observer
+from ..exceptions import Error, ObjectNotFound
 from ..membership import InformerRef, plan_informers, ref_for
-from . import Informer, Indexer
-
+from ..observer import Observer
+from ..resources import PartialObjectMetadata, identity
+from ..tasks import Task
+from . import Indexer, Informer
 
 log = logging.getLogger(__name__)
 
@@ -25,20 +24,20 @@ log = logging.getLogger(__name__)
 #   - one controller for each gvk using the shared gvk store
 #
 
-ALL_NAMESPACES = set(['*'])
+ALL_NAMESPACES = {'*'}
 
 
 class Cache(Task):
-    #def __init__(self, api_client, all_namespaces=False,
+    # def __init__(self, api_client, all_namespaces=False,
     #        namespaces=None, resources=None):
     def __init__(self, api_client, stores=None):
         super().__init__()
         self.api_client = api_client
-        #self._all_namespaces = all_namespaces
+        # self._all_namespaces = all_namespaces
         self._all_namespaces = False
-        #self._namespaces = namespaces or set()
+        # self._namespaces = namespaces or set()
         self._namespaces = set()
-        #self._resources = resources or set()
+        # self._resources = resources or set()
         self._resources = set()
 
         self._task_group = None  # Main taskgroup
@@ -161,20 +160,19 @@ class Cache(Task):
         self._registered_resources.add(resource)
         if resource not in self._resources:
             # Should never happen.
-            raise Exception(f'resource registered from unknown source: {resource}')
+            raise Error(f'resource registered from unknown source: {resource}')
         self._resources.add(resource)
 
     def get_store(self, resource):
-        #self.register_resource(resource)
+        # self.register_resource(resource)
         try:
             store = self._stores[resource]
         except KeyError:
             store = self._stores[resource] = Indexer()
-        finally:
-            return store
+        return store
 
     def get_informers_by(self, resource=None, namespace=None):
-        #log.debug(f'get_informers_by: {resource} {namespace}')
+        # log.debug(f'get_informers_by: {resource} {namespace}')
         if self._all_namespaces and identity.is_namespaced(resource):
             namespace = '*'
         informers = [
@@ -187,11 +185,11 @@ class Cache(Task):
                 )
             )
         ]
-        #log.debug(f'get_informers_by: informers: {informers}')
+        # log.debug(f'get_informers_by: informers: {informers}')
         return informers
 
     def get_informer(self, resource, namespace=None, create=True):
-        #log.debug(f'get_informer: {resource} {namespace}')
+        # log.debug(f'get_informer: {resource} {namespace}')
         if self._all_namespaces and identity.is_namespaced(resource):
             namespace = '*'
         informer = None

@@ -4,6 +4,7 @@ Seam under test: a user-assigned Observer sees API calls through the
 client facade, watch events through the informer, and reconcile outcomes
 through the controller — with the no-op default keeping everything quiet.
 """
+
 import anyio
 import pytest
 from lightkube.models.meta_v1 import ObjectMeta

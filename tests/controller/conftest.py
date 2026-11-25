@@ -1,6 +1,6 @@
 import pytest
-from lightkube.resources.core_v1 import Pod
 from lightkube.models.meta_v1 import ObjectMeta
+from lightkube.resources.core_v1 import Pod
 
 
 @pytest.fixture

@@ -1,13 +1,11 @@
-import anyio
-
-from lightkube.resources.apiextensions_v1 import CustomResourceDefinition
 from lightkube.core.resource_registry import resource_registry
 from lightkube.generic_resource import create_resources_from_crd
+from lightkube.resources.apiextensions_v1 import CustomResourceDefinition
 
 import chopf
+
 from ...builder import resource_rbac
 from ...controller import Controller
-
 
 # RBAC for the internal controllers is registered at import time: the
 # `chopf rbac` command only considers import-time side effects, anything
@@ -36,13 +34,11 @@ class CrdController(Controller):
         self.manager = manager
         super().__init__(*args, **kwargs)
 
-    async def reconcile(self,
-        client: chopf.Client, request: chopf.Request
-    ):
+    async def reconcile(self, client: chopf.Client, request: chopf.Request):
         crd = await client.get(request)
 
         if crd.metadata.deletionTimestamp is not None:
-            #print('resource is being deleted')
+            # print('resource is being deleted')
             await self.remove_crd(crd)
             return
 
@@ -56,11 +52,11 @@ class CrdController(Controller):
             for resource in registry.get_resources(crd):
                 if resource in self.manager.resources:
                     resource_registry.register(resource)
-                    #if self.manager.is_active:
-                        # Give the API server some time to serve the new CRD
-                        # endpoints before we start hammering it.
-                        # FIXME: This is a hack. Would need a better way to
-                        #        figure out that the endpoint is usable.
+                    # if self.manager.is_active:
+                    # Give the API server some time to serve the new CRD
+                    # endpoints before we start hammering it.
+                    # FIXME: This is a hack. Would need a better way to
+                    #        figure out that the endpoint is usable.
                     #    await anyio.sleep(3)
                     await self.manager.add_resource(resource)
                 else:
@@ -84,4 +80,3 @@ class CrdController(Controller):
             group_version = f'{group}/{version.name}'
             resource = resource_registry.get(group_version, kind)
             await self.manager.remove_resource(resource)
-

@@ -211,9 +211,7 @@ def _fixup_schema(node):
             # of treating it as int.
             any_of = node.get('anyOf')
             if isinstance(any_of, list) and len(any_of) == 2:
-                branch_types = {
-                    b.get('type') for b in any_of if isinstance(b, dict)
-                }
+                branch_types = {b.get('type') for b in any_of if isinstance(b, dict)}
                 if branch_types == {'integer', 'string'}:
                     del node['anyOf']
                     node.setdefault('type', 'integer')
@@ -278,7 +276,7 @@ def _nested_model(type_):
 def _type_hints(cls):
     try:
         return t.get_type_hints(cls, include_extras=True)
-    except Exception:
+    except Exception:  # noqa: BLE001 - unresolvable hints (NameError, TypeError, ...)
         return {}
 
 
@@ -361,22 +359,22 @@ class SchemaAnnotation:
     msgspec itself. SchemaAnnotation remains for whole-model overrides.
     """
 
-    title: t.Optional[str] = None
-    description: t.Optional[str] = None
-    examples: t.Optional[list[t.Any]] = None
-    deprecated: t.Optional[bool] = None
-    min_length: t.Optional[int] = None
-    max_length: t.Optional[int] = None
-    pattern: t.Optional[str] = None
-    format: t.Optional[_Format] = None
-    minimum: t.Optional[numbers.Number] = None
-    maximum: t.Optional[numbers.Number] = None
-    exclusive_minimum: t.Optional[numbers.Number] = None
-    exclusive_maximum: t.Optional[numbers.Number] = None
-    multiple_of: t.Optional[numbers.Number] = None
-    min_items: t.Optional[int] = None
-    max_items: t.Optional[int] = None
-    unique_items: t.Optional[bool] = None
+    title: str | None = None
+    description: str | None = None
+    examples: list[t.Any] | None = None
+    deprecated: bool | None = None
+    min_length: int | None = None
+    max_length: int | None = None
+    pattern: str | None = None
+    format: _Format | None = None
+    minimum: numbers.Number | None = None
+    maximum: numbers.Number | None = None
+    exclusive_minimum: numbers.Number | None = None
+    exclusive_maximum: numbers.Number | None = None
+    multiple_of: numbers.Number | None = None
+    min_items: int | None = None
+    max_items: int | None = None
+    unique_items: bool | None = None
 
     def schema(self):
         key_map = {

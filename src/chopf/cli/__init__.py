@@ -2,20 +2,16 @@ import logging
 import os
 import pathlib
 import sys
-
-from typing import List
-from typing_extensions import Annotated
+from typing import Annotated
 
 import typer.core
 
 typer.core.rich = None
 
-import typer  # noqa: E402
+import typer
 
-
-from . import loaders  # noqa: E402
 from .. import exceptions
-
+from . import loaders
 
 app = typer.Typer(add_completion=False)
 
@@ -30,7 +26,7 @@ def main(
     """
     Chopf.
     """
-    setattr(ctx, 'obj', {})
+    ctx.obj = {}
 
     logging.basicConfig(
         level=logging.ERROR,
@@ -54,20 +50,19 @@ def main(
 @app.command(name='run', short_help='run')
 def _run(
     ctx: typer.Context,
-    modules: Annotated[List[str], typer.Option()] = None,
-    paths: Annotated[List[pathlib.Path], typer.Argument()] = None,
+    modules: Annotated[list[str] | None, typer.Option()] = None,
+    paths: Annotated[list[pathlib.Path] | None, typer.Argument()] = None,
     all_namespaces: Annotated[
         bool, typer.Option('--all-namespaces', help='Watch all namespaces.')
     ] = False,
     namespaces: Annotated[
-        List[str],
+        list[str] | None,
         typer.Option(
             '--namespace',
             help='Watch the given namespaces instead of the default. Can be given multiple times.',
         ),
     ] = None,
 ) -> None:
-    log = ctx.obj['log']
     debug = ctx.obj['debug']
 
     sys.path.insert(0, os.getcwd())
@@ -98,8 +93,8 @@ def _run(
 )
 def _crd(
     ctx: typer.Context,
-    modules: Annotated[List[str], typer.Option()] = None,
-    paths: Annotated[List[pathlib.Path], typer.Argument()] = None,
+    modules: Annotated[list[str] | None, typer.Option()] = None,
+    paths: Annotated[list[pathlib.Path] | None, typer.Argument()] = None,
 ) -> None:
 
     sys.path.insert(0, os.getcwd())
@@ -117,13 +112,11 @@ def _crd(
     print(crds_yaml)
 
 
-@app.command(
-    name='rbac', short_help='Generate RBAC definitions from the given modules'
-)
+@app.command(name='rbac', short_help='Generate RBAC definitions from the given modules')
 def _rbac(
     ctx: typer.Context,
-    modules: Annotated[List[str], typer.Option()] = None,
-    paths: Annotated[List[pathlib.Path], typer.Argument()] = None,
+    modules: Annotated[list[str] | None, typer.Option()] = None,
+    paths: Annotated[list[pathlib.Path] | None, typer.Argument()] = None,
 ) -> None:
 
     sys.path.insert(0, os.getcwd())
@@ -135,6 +128,7 @@ def _rbac(
     )
 
     from chopf.builder._rbac import print_rbac
+
     print_rbac()
 
 

@@ -4,10 +4,12 @@ Builders are the user-facing decorator API. They exist only to collect
 frozen specs (see chopf.specs); they never reference runtime instances.
 The manager materializes specs into running components.
 """
+
 import logging
 
 from ..builder import resource_rbac
 from ..controller import requests_from_event_for_owner
+from ..exceptions import Error
 from ..specs import ControllerSpec, InformerSpec, WatchSpec
 
 log = logging.getLogger(__name__)
@@ -80,9 +82,7 @@ class ControllerBuilder:
         """
         # Register minimal RBAC for watch to work.
         resource_rbac(resource, verbs='get;list;watch')
-        self._add_watch(
-            resource, requests_from_event_for_owner, owner=self.resource
-        )
+        self._add_watch(resource, requests_from_event_for_owner, owner=self.resource)
 
     def watch(self, resource):
         """Decorator that registers a watch for the given resource.
@@ -112,7 +112,7 @@ class ControllerBuilder:
     def startup(self, func=None, /):
         """Decorator that registers an startup function with this controller."""
         if callable(self._startup):
-            raise Exception(
+            raise Error(
                 f'Controller already has a startup function registered: {self._startup}'
             )
         return _parens_optional(self._set_startup, func)
@@ -123,7 +123,7 @@ class ControllerBuilder:
     def shutdown(self, func=None, /):
         """Decorator that registers an shutdown function with this controller."""
         if callable(self._shutdown):
-            raise Exception(
+            raise Error(
                 f'Controller already has a shutdown function registered: {self._shutdown}'
             )
         return _parens_optional(self._set_shutdown, func)
@@ -140,7 +140,7 @@ class ControllerBuilder:
     def reconcile(self, func=None, /, *, concurrency=1):
         """Decorator that registers a reconcile function with this controller."""
         if callable(self._reconcile):
-            raise Exception(
+            raise Error(
                 f'Controller already has a reconcile function registered: {self._reconcile}'
             )
         self._concurrent_reconciles = concurrency

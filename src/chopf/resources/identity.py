@@ -10,6 +10,7 @@ resources (created via the @resource decorator) get their dunders from
 chopf's Resource base class; lightkube-provided resources are formatted
 for logging via resource_repr()/resource_str().
 """
+
 from lightkube.core import resource as lkr
 
 
@@ -31,9 +32,7 @@ def gvk(resource) -> str:
 
 
 def is_namespaced(resource) -> bool:
-    return issubclass(
-        resource, (lkr.NamespacedResource, lkr.NamespacedSubResource)
-    )
+    return issubclass(resource, (lkr.NamespacedResource, lkr.NamespacedSubResource))
 
 
 def resource_str(obj) -> str:
@@ -72,6 +71,6 @@ def resource_repr(obj) -> str:
             ident.append(name)
         if resource_version is not None:
             ident.append(resource_version)
-        return f"<Object {' '.join(ident)}>"
+        return f'<Object {" ".join(ident)}>'
     except AttributeError:
         return repr(obj)

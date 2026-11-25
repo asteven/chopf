@@ -1,4 +1,3 @@
-import asyncio
 from types import SimpleNamespace
 
 import anyio
@@ -100,7 +99,6 @@ async def test_async_client_get_falls_back_to_api(pod_resource):
 @pytest.mark.anyio
 async def test_async_client_get_raises_custom_on_api_error():
     cache = DummyCache()
-    api = DummyAsyncAPI()
 
     class FailingAPI(DummyAsyncAPI):
         async def get(self, *args, **kwargs):

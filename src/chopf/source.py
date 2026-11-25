@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import dataclasses
 import logging
-from typing import Any, Awaitable, Callable, Iterable, Optional, Sequence, TYPE_CHECKING
+from collections.abc import Awaitable, Callable, Iterable, Sequence
+from typing import TYPE_CHECKING, Any
 
 import anyio
 from anyio import TASK_STATUS_IGNORED
@@ -11,12 +12,11 @@ from anyio.streams.memory import (
     MemoryObjectReceiveStream,
     MemoryObjectSendStream,
 )
-
 from lightkube.core import resource as lkr
 
-from .tasks import Task
 from .invocation import invoke
 from .resources import identity
+from .tasks import Task
 
 if TYPE_CHECKING:
     from .controller.request import Request
@@ -29,18 +29,18 @@ __all__ = [
 log = logging.getLogger(__name__)
 
 RequestIterable = Iterable['Request']
-HandlerResult = Optional[RequestIterable]
+HandlerResult = RequestIterable | None
 HandlerCallable = Callable[..., HandlerResult | Awaitable[HandlerResult]]
 PredicateCallable = Callable[[Any], bool | Awaitable[bool]]
 
 
 @dataclasses.dataclass
 class EventSource(Task):
-    queue: 'Workqueue'
+    queue: Workqueue
     resource: lkr.Resource
     handler: HandlerCallable
-    kwargs: Optional[dict[str, Any]] = None
-    predicates: Optional[Sequence[PredicateCallable]] = None
+    kwargs: dict[str, Any] | None = None
+    predicates: Sequence[PredicateCallable] | None = None
 
     def __post_init__(self) -> None:
         Task.__init__(self)
@@ -67,7 +67,9 @@ class EventSource(Task):
 
     async def event_stream_handler(self) -> None:
         if self._rx is None:
-            raise RuntimeError('event stream handler started before receiver was initialized')
+            raise RuntimeError(
+                'event stream handler started before receiver was initialized'
+            )
         async with self._rx:
             async for event in self._rx:
                 log.debug('received event: %s', event)
@@ -85,7 +87,7 @@ class EventSource(Task):
                         if requests:
                             for request in requests:
                                 await self.queue.add(request)
-                    except Exception as e:  # noqa: BLE001
+                    except Exception:
                         # TODO: proper error handling
                         log.error('FAILED to process %s', event)
                         if hasattr(event, 'obj'):
@@ -93,12 +95,14 @@ class EventSource(Task):
                         elif hasattr(event, 'old'):
                             print(event.old)
                             print(event.new)
-                        raise e
+                        raise
 
     @property
     def stream(self) -> MemoryObjectSendStream[Any]:
         if self._tx is None:
-            raise RuntimeError('event stream requested before transmitter was initialized')
+            raise RuntimeError(
+                'event stream requested before transmitter was initialized'
+            )
         stream = self._tx.clone()
         self._streams.append(stream)
         return stream
@@ -108,7 +112,9 @@ class EventSource(Task):
             self._task_group.cancel_scope.cancel()
         self.reset_task()
 
-    async def __call__(self, task_status: TaskStatus[None] = TASK_STATUS_IGNORED) -> None:
+    async def __call__(
+        self, task_status: TaskStatus[None] = TASK_STATUS_IGNORED
+    ) -> None:
         log.debug('starting %s', self)
 
         try:

@@ -1,25 +1,19 @@
 import dataclasses
-import itertools
 import logging
 import random
 import typing
 
 import anyio
+import httpx2
+import lightkube
 from anyio import TASK_STATUS_IGNORED
 from anyio.abc import TaskStatus
-import httpx2
-
 from lightkube.core import resource as lkr
 
-import lightkube
-
-from ..exceptions import HttpError
 from ..observer import Observer
+from ..resources import identity, is_same_version
 from ..tasks import Task
-from ..invocation import invoke
-from ..resources import is_same_version, identity
-from . import CreateEvent, UpdateEvent, DeleteEvent
-
+from . import CreateEvent, DeleteEvent, UpdateEvent
 
 log = logging.getLogger(__name__)
 
@@ -116,14 +110,14 @@ class Informer(Task):
         try:
             stream = self._streams[key]
             await stream.send(event)
-        except (anyio.ClosedResourceError, anyio.BrokenResourceError) as e:
-            #log.exception(e)
-            #log.debug(f'key: {key}, stream: {stream} ')
+        except (anyio.ClosedResourceError, anyio.BrokenResourceError):
+            # log.exception(e)
+            # log.debug(f'key: {key}, stream: {stream} ')
             self.remove_stream(key)
 
     async def _dispatch(self, event_name, *args, **kwargs):
         """Create an event and dispatch it to all our streams."""
-        #print(f'_dispatch: {event_name} {args}')
+        # print(f'_dispatch: {event_name} {args}')
         if len(self._streams) > 0:
             event = _create_event(event_name, args, kwargs)
 
@@ -224,49 +218,52 @@ class Informer(Task):
 
             except TimeoutError as e:
                 # TODO: how do we deal with this? exponential backoff?
-                log.error(f'TimeoutError while listing/watching {self.api_version}/{self.kind}')
+                log.error(
+                    f'TimeoutError while listing/watching {self.api_version}/{self.kind}'
+                )
                 log.error(e)
             except lightkube.ApiError as e:
-                log.error(f'ApiError while listing/watching {self.api_version}/{self.kind}')
+                log.error(
+                    f'ApiError while listing/watching {self.api_version}/{self.kind}'
+                )
                 log.error(e)
                 await anyio.sleep(3)
-                #print(e.status)
-                #print(e.request)
-                #print(e.response)
+                # print(e.status)
+                # print(e.request)
+                # print(e.response)
             except httpx2.HTTPStatusError as e:
-                log.error(f'HTTP error while listing/watching {self.api_version}/{self.kind}')
+                log.error(
+                    f'HTTP error while listing/watching {self.api_version}/{self.kind}'
+                )
                 log.error(e)
                 await anyio.sleep(3)
-                #raise HttpError(
+                # raise HttpError(
                 #    e.request.method,
                 #    e.request.url,
                 #    e.response.status_code,
                 #    message=f'HTTP error while listing/watching {self.api_version}/{self.kind}'
-                #) from e
-            except Exception as e:
+                # ) from e
+            except Exception as e:  # noqa: BLE001
                 # Workaround https://github.com/gtsystem/lightkube/issues/108
-                log.error(f'Unknown error while listing/watching {self.api_version}/{self.kind}')
+                log.error(
+                    f'Unknown error while listing/watching {self.api_version}/{self.kind}'
+                )
                 log.error(e)
                 await anyio.sleep(3)
 
     async def _process_event(self, event, obj):
-        try:
-            #print(f'_process_event: {event} {obj}')
-            if callable(self.transformer):
-                obj = self.transformer(obj)
-            match event:
-                case 'ADDED' | 'LISTED' | 'MODIFIED':
-                    await self._add_or_update(obj)
-                case 'DELETED':
-                    await self._delete(obj)
-                case 'ERROR':
-                    await self._error(obj)
-            self.observer.on_watch_event(identity.gvk(self.resource), event)
-            # self.resource_version = obj.metadata.resourceVersion
-        except Exception as e:
-            # TODO: use a more explicit Exception subclass?
-            raise e
-            await self._error(obj)
+        # print(f'_process_event: {event} {obj}')
+        if callable(self.transformer):
+            obj = self.transformer(obj)
+        match event:
+            case 'ADDED' | 'LISTED' | 'MODIFIED':
+                await self._add_or_update(obj)
+            case 'DELETED':
+                await self._delete(obj)
+            case 'ERROR':
+                await self._error(obj)
+        self.observer.on_watch_event(identity.gvk(self.resource), event)
+        # self.resource_version = obj.metadata.resourceVersion
 
     def stop(self):
         if self._task_group:

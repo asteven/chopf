@@ -9,6 +9,7 @@ Specs are frozen on purpose: they describe *what* should run, and never
 reference *running* instances. All runtime wiring happens in exactly one
 place: the manager's materialization step.
 """
+
 from __future__ import annotations
 
 import dataclasses
@@ -46,7 +47,7 @@ class ControllerSpec:
     controller_class: type | None = None
 
     @classmethod
-    def from_class(cls, controller_class: type) -> 'ControllerSpec':
+    def from_class(cls, controller_class: type) -> ControllerSpec:
         """Build a spec from a Controller subclass' declared attributes."""
         resource = getattr(controller_class, 'resource', None)
         if resource is None:
@@ -57,9 +58,7 @@ class ControllerSpec:
             resource=resource,
             controller_class=controller_class,
             name=getattr(controller_class, 'name', None),
-            concurrent_reconciles=getattr(
-                controller_class, 'concurrent_reconciles', 1
-            ),
+            concurrent_reconciles=getattr(controller_class, 'concurrent_reconciles', 1),
             wait_for_cache=getattr(controller_class, 'wait_for_cache', True),
         )
 

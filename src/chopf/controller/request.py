@@ -1,12 +1,10 @@
 import itertools
 import logging
 
-from ..resources import identity
-
-from ..invocation import nonblocking
-
 from lightkube.codecs import resource_registry
 
+from ..invocation import nonblocking
+from ..resources import identity
 
 log = logging.getLogger(__name__)
 
@@ -35,9 +33,7 @@ class Request:
         return identity.kind(self.resource)
 
     def __hash__(self):
-        return hash(
-            (self.api_version, self.kind, self.namespace, self.name)
-        )
+        return hash((self.api_version, self.kind, self.namespace, self.name))
 
     def __eq__(self, other):
         return (
@@ -57,7 +53,9 @@ class Request:
             name = f'{self.namespace}/{self.name}'
         else:
             name = self.name
-        return f'<Request {self.api_version}/{self.kind} {name} retries: {self.retries}>'
+        return (
+            f'<Request {self.api_version}/{self.kind} {name} retries: {self.retries}>'
+        )
 
 
 @nonblocking
@@ -102,17 +100,13 @@ def request_for_owner(obj, owner=None):
         return
     namespace = obj.metadata.namespace
     name = obj.metadata.name
-    try:
-        refs = obj.metadata.ownerReferences
-        if refs:
-            for ref in refs:
-                if (
-                    ref.apiVersion == identity.api_version(owner)
-                    and ref.kind == identity.kind(owner)
-                    and ref.controller
-                ):
-                    name = ref.name
-                    yield Request(owner, name, namespace=namespace)
-    except AttributeError as e:
-        raise e
-        pass
+    refs = obj.metadata.ownerReferences
+    if refs:
+        for ref in refs:
+            if (
+                ref.apiVersion == identity.api_version(owner)
+                and ref.kind == identity.kind(owner)
+                and ref.controller
+            ):
+                name = ref.name
+                yield Request(owner, name, namespace=namespace)

@@ -16,6 +16,7 @@ This separation serves two purposes:
   reads from. Leadership (LeaseController, once implemented) decides
   whether the payload runs alongside.
 """
+
 import logging
 
 from ..cache import Cache

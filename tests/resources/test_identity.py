@@ -5,6 +5,7 @@ lightkube's classes.
 Seam under test: identity helpers over a lightkube-provided resource
 (Pod) and over a chopf resource created by the @resource decorator.
 """
+
 import lightkube.core.resource as lkr
 from lightkube.models.meta_v1 import ObjectMeta
 from lightkube.resources.core_v1 import Pod

@@ -1,9 +1,9 @@
 from .crd import CrdController
-from .namespace import NamespaceController
 from .lease import LeaseController
+from .namespace import NamespaceController
 
 __all__ = [
     'CrdController',
-    'NamespaceController',
     'LeaseController',
+    'NamespaceController',
 ]

@@ -1,7 +1,6 @@
-import chopf
-
 from lightkube.resources.core_v1 import Pod
 
+import chopf
 
 # Get the informer for Pods.
 informer = chopf.informer(Pod)
@@ -18,8 +17,7 @@ def transform(obj):
 # Receive a stream of events from the informer.
 @informer.stream()
 async def _stream(stream):
-    """Receive a event stream from the informer.
-    """
+    """Receive a event stream from the informer."""
     async with stream:
         async for event in stream:
             print(f'stream: {event}')
@@ -28,14 +26,11 @@ async def _stream(stream):
 # Another receiver of the same events.
 @informer.stream()
 async def _stream2(stream):
-    """Receive a event stream from the informer.
-    """
+    """Receive a event stream from the informer."""
     async with stream:
         async for event in stream:
-
             print(f'stream2: {event}')
 
 
 if __name__ == '__main__':
     chopf.run()
-

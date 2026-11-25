@@ -1,37 +1,29 @@
 import functools
-import itertools
 import logging
 import platform
 import signal
-import sys
 import uuid
 
-import uvloop
 import anyio
-from anyio import open_signal_receiver
-from anyio import TASK_STATUS_IGNORED
-from anyio import CancelScope
+import uvloop
+from anyio import TASK_STATUS_IGNORED, CancelScope, open_signal_receiver
 from anyio.abc import TaskStatus
-
 from lightkube import AsyncClient as LightkubeAsyncClient
-from lightkube.core.resource_registry import resource_registry, LoadResourceError
+from lightkube.core.resource_registry import LoadResourceError, resource_registry
 
-
-import chopf
 from .. import exceptions
-from ..cache import Cache, Indexer
-from ..controller import Controller
-from ..client import AsyncClient, SyncClient
-from ..tasks import Task
-from ..resources import custom_resource_registry, identity
 from ..builder import resource_rbac
+from ..cache import Cache, Indexer
+from ..client import AsyncClient, SyncClient
+from ..controller import Controller
 from ..observer import Observer
-
+from ..resources import custom_resource_registry, identity
+from ..tasks import Task
 from .builders import ControllerBuilder, InformerBuilder
-from .system import InternalRuntime
+
 # Re-enable together with the LeaseController startup below.
 from .controllers import LeaseController  # noqa: F401
-
+from .system import InternalRuntime
 
 log = logging.getLogger(__name__)
 
@@ -132,9 +124,8 @@ class Manager:
         self._stores = {}
         self.is_active = False
         # The unique ID of this operator, used in leader election.
-        self.operator_id = '%s-%s' % (
-            platform.node(),
-            str(uuid.uuid4()).replace('-', '')[:10],
+        self.operator_id = (
+            f'{platform.node()}-{str(uuid.uuid4()).replace("-", "")[:10]}'
         )
         self._builders = {
             'controller': {},
@@ -150,13 +141,13 @@ class Manager:
         # that import-time decorators register into, injectable for tests.
         self.custom_resources = custom_resource_registry
         self._main_task_group = None  # Main taskgroup
-        self._task_group = None # regular taskgroup
+        self._task_group = None  # regular taskgroup
         self._stop = None
         self._exit = anyio.Event()
 
     def __repr__(self):
         _id = id(self)
-        #namespaces = self._active_namespaces
+        # namespaces = self._active_namespaces
         namespaces = self.namespaces
         resources = {identity.gvk(resource) for resource in self.resources}
         return f'<Manager {self.operator_id} namespaces: {namespaces} resources: {resources}>'
@@ -235,11 +226,13 @@ class Manager:
                 for stream_receiver in stream_receivers:
                     if not stream_receiver.is_running:
                         await self._task_group.start(stream_receiver)
-                        #self._task_group.start_soon(stream_receiver)
+                        # self._task_group.start_soon(stream_receiver)
                 for informer in self.cache.get_informers_by(resource=resource):
                     for stream_receiver in stream_receivers:
                         if not informer.has_stream(key=stream_receiver):
-                            informer.add_stream(stream_receiver.stream, key=stream_receiver)
+                            informer.add_stream(
+                                stream_receiver.stream, key=stream_receiver
+                            )
             else:
                 for stream_receiver in stream_receivers:
                     stream_receiver.stop()
@@ -251,7 +244,7 @@ class Manager:
                     await self._task_group.start(controller)
                 #    #self._task_group.start_soon(controller)
 
-                #for source in controller.event_sources:
+                # for source in controller.event_sources:
                 #    for informer in self.cache.get_informers_by(resource=source.resource):
                 #        if not informer.has_stream(key=source):
                 #            informer.add_stream(source.stream, key=source)
@@ -276,8 +269,9 @@ class Manager:
                     identity.api_version(resource), identity.kind(resource)
                 )
                 await self.add_resource(resource)
-            except LoadResourceError as e:
-                log.warning('ignoring unusable resource: %s',
+            except LoadResourceError:
+                log.warning(
+                    'ignoring unusable resource: %s',
                     identity.gvk(resource),
                 )
                 await self.remove_resource(resource)
@@ -303,7 +297,7 @@ class Manager:
                     # Initial reconcilation.
                     tg.start_soon(self.sync_membership, True)
 
-                    #log.debug('started %s', self)
+                    # log.debug('started %s', self)
                     log.info('started %s', self)
                     task_status.started()
 
@@ -345,7 +339,7 @@ class Manager:
             if namespaces is not None:
                 self.namespaces = set(namespaces)
             else:
-                self.namespaces = set([self.async_api_client.namespace])
+                self.namespaces = {self.async_api_client.namespace}
 
         log.debug('startup %s', self)
 
@@ -382,7 +376,7 @@ class Manager:
                 await self._exit.wait()
         except* exceptions.Error as eg:
             if self.debug:
-                raise eg
+                raise
             error_messages = []
             for error in exceptions.iterate_errors(eg):
                 error_messages.append(str(error))

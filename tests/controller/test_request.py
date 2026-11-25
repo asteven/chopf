@@ -1,9 +1,8 @@
-import itertools
-
 import pytest
 from lightkube.models.meta_v1 import ObjectMeta, OwnerReference
 from lightkube.resources.core_v1 import Pod
 
+from chopf.cache import events
 from chopf.controller.request import (
     Request,
     request_for_object,
@@ -11,7 +10,6 @@ from chopf.controller.request import (
     requests_from_event_for_object,
     requests_from_event_for_owner,
 )
-from chopf.cache import events
 
 
 @pytest.fixture(autouse=True)

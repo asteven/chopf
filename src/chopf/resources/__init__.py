@@ -3,23 +3,22 @@ import yaml
 from .registry import (
     custom_resource_registry,
 )
-
 from .resources import (
     GenericStruct,
     GroupVersion,
     ObjectMeta,
-    Resource,
     PartialObjectMetadata,
+    Resource,
 )
 
 __all__ = [
-    'crd',
-    'custom_resource_registry',
     'GenericStruct',
     'GroupVersion',
     'ObjectMeta',
     'PartialObjectMetadata',
     'Resource',
+    'crd',
+    'custom_resource_registry',
 ]
 
 
