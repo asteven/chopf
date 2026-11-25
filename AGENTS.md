@@ -9,20 +9,20 @@ or `nono why --self --path /tmp --op write` reports a denial, you are inside
 nono and must redirect temp files into the repo:
 
 ```bash
-TMPDIR=$PWD/tmp
+TMPDIR=$PWD/.tmp
 ```
 
 Prefix every command that may create temp files — this includes `uv run` (and
 therefore pytest, ruff, etc. invoked through it):
 
 ```bash
-TMPDIR=$PWD/tmp uv run --group dev pytest tests -q
-TMPDIR=$PWD/tmp uv run --group dev ruff check .
-TMPDIR=$PWD/tmp uv run --group dev ruff format --check .
+TMPDIR=$PWD/.tmp uv run --group dev pytest tests -q
+TMPDIR=$PWD/.tmp uv run --group dev ruff check .
+TMPDIR=$PWD/.tmp uv run --group dev ruff format --check .
 ```
 
-The `tmp/` directory at the repo root exists for this purpose; it is gitignored
-and not part of the source tree. If nono is not present, no prefix is needed.
+The `.tmp/` directory at the repo root exists for this purpose; it is
+gitignored and not part of the source tree. If nono is not present, no prefix is needed.
 
 ## Imports: order is load-bearing in some `__init__.py` files
 
