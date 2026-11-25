@@ -1,18 +1,19 @@
 # AGENTS.md
 
-## Sandbox: set TMPDIR before running tools
+## Sandbox: check for nono, then set TMPDIR
 
-This repo is developed inside a `nono` OS-level sandbox that denies writes to
-the system `/tmp`. Any tool that creates temp files there fails with a
-misleading `Permission denied (os error 13)` at a path like `/tmp/.tmpXXXXXX`.
-
-Always prefix commands that may create temp files with:
+Some developers run agents inside a `nono` OS-level sandbox that denies writes
+to the system `/tmp`. Detect this before running tools: if a command fails with
+a misleading `Permission denied (os error 13)` at a path like `/tmp/.tmpXXXXXX`,
+or `nono why --self --path /tmp --op write` reports a denial, you are inside
+nono and must redirect temp files into the repo:
 
 ```bash
 TMPDIR=$PWD/tmp
 ```
 
-This includes `uv run` (and therefore pytest, ruff, etc. invoked through it):
+Prefix every command that may create temp files — this includes `uv run` (and
+therefore pytest, ruff, etc. invoked through it):
 
 ```bash
 TMPDIR=$PWD/tmp uv run --group dev pytest tests -q
@@ -20,8 +21,8 @@ TMPDIR=$PWD/tmp uv run --group dev ruff check .
 TMPDIR=$PWD/tmp uv run --group dev ruff format --check .
 ```
 
-The `tmp/` directory at the repo root exists for this purpose; it is not
-part of the source tree.
+The `tmp/` directory at the repo root exists for this purpose; it is gitignored
+and not part of the source tree. If nono is not present, no prefix is needed.
 
 ## Imports: order is load-bearing in some `__init__.py` files
 
