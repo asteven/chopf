@@ -16,10 +16,15 @@ log = logging.getLogger(__name__)
 
 
 def _parens_optional(register, func=None):
-    """Support both @decorator and @decorator() forms."""
+    """Support both @decorator and @decorator() forms.
+
+    The decorated function is returned unchanged so that the decorated
+    name stays bound (and testable).
+    """
 
     def decorator(f):
         register(f)
+        return f
 
     if func is None:
         # Called as @decorator() with parens.
@@ -94,6 +99,7 @@ class ControllerBuilder:
 
         def decorator(f):
             self._add_watch(resource, f)
+            return f
 
         return decorator
 

@@ -9,6 +9,7 @@ import dataclasses
 import importlib
 
 import pytest
+from lightkube.models.meta_v1 import ObjectMeta
 from lightkube.resources.core_v1 import Pod
 
 manager_mod = importlib.import_module('chopf.manager.manager')
@@ -53,8 +54,9 @@ def manager():
 def test_controller_spec_collects_decorated_handlers(manager):
     builder = manager.controller(Pod)
 
-    # Note: the decorators return None (they register, not wrap),
-    # so we apply them explicitly to keep references for assertions.
+    # Note: the decorators register as a side effect and return the
+    # function unchanged; we apply them explicitly to keep references
+    # for assertions.
     async def reconcile(client, request):
         pass
 
@@ -91,6 +93,96 @@ def test_controller_spec_collects_decorated_handlers(manager):
     watch = spec.watches[0]
     assert watch.resource is Pod
     assert watch.kwargs == {'owner': Pod}
+
+
+def test_registration_decorators_return_the_decorated_function(manager):
+    builder = manager.controller(Pod)
+
+    @builder.reconcile(concurrency=2)
+    async def reconcile(client, request):
+        pass
+
+    @builder.predicate()
+    def predicate(event):
+        return True
+
+    @builder.predicate  # no-parens form
+    def another_predicate(event):
+        return True
+
+    @builder.startup()
+    def startup(client):
+        pass
+
+    @builder.shutdown()
+    def shutdown(client):
+        pass
+
+    @builder.task()
+    async def task(client):
+        pass
+
+    @builder.watch(Pod)
+    def on_pod_event(event):
+        yield from ()
+
+    assert all(
+        callable(f)
+        for f in (
+            reconcile,
+            predicate,
+            another_predicate,
+            startup,
+            shutdown,
+            task,
+            on_pod_event,
+        )
+    )
+
+    spec = builder.to_spec()
+    assert spec.reconcile is reconcile
+    assert spec.concurrent_reconciles == 2
+    assert spec.predicates == (predicate, another_predicate)
+    assert spec.startup is startup
+    assert spec.shutdown is shutdown
+    assert spec.tasks == (task,)
+    assert spec.watches[0].handler is on_pod_event
+
+
+def test_informer_decorators_return_the_decorated_function(manager):
+    builder = manager.informer(Pod)
+
+    @builder.stream()
+    def receiver(event):
+        pass
+
+    @builder.transform
+    def transformer(obj):
+        return obj
+
+    assert callable(receiver)
+    assert callable(transformer)
+
+    spec = builder.to_spec()
+    assert spec.stream_receivers == (receiver,)
+    assert spec.transformer is transformer
+
+
+def test_index_decorator_returns_the_decorated_function(manager):
+    builder = manager.controller(Pod)
+
+    @builder.index('by-name')
+    def by_name(obj):
+        return [obj.metadata.name]
+
+    assert callable(by_name)
+
+    store = manager.store(Pod)
+    pod = Pod(metadata=ObjectMeta(name='foo', namespace='default'))
+    pod.apiVersion = 'v1'
+    pod.kind = 'Pod'
+    store.add(pod)
+    assert store.get_index('by-name')['foo'] == [pod]
 
 
 def test_controller_spec_is_frozen(manager):

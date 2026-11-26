@@ -148,6 +148,7 @@ class Indexer(Store):
 
         def decorator(f):
             self.add_indexers({index_name: f})
+            return f
 
         return decorator
 
