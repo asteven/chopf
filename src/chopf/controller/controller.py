@@ -5,6 +5,7 @@ import time
 import anyio
 from anyio import TASK_STATUS_IGNORED, CancelScope
 from anyio.abc import TaskStatus
+from lightkube.core.exceptions import ApiError
 from lightkube.models.meta_v1 import OwnerReference
 
 from ..exceptions import (
@@ -239,12 +240,22 @@ class Controller(Task):
                 else:
                     logger.debug('requeuing %r', request)
                     await self.queue.add(request)
-            except Exception:
-                outcome = 'error'
-                log.exception('error while processing request %r', request)
-                # raise e
-                # Unexpected error, log it and requeue with rate limiting.
-                logger.debug('requeuing with rate limiting %r', request)
+            except Exception as e:
+                if isinstance(e, ApiError) and getattr(e.status, 'code', None) == 409:
+                    outcome = 'conflict'
+                    # Optimistic concurrency conflict: our cached view of
+                    # the object was stale (e.g. another controller updated
+                    # it in the meantime) or, on create, the object already
+                    # existed. Reconciles are idempotent by contract, so
+                    # this is an expected transient, not an error: requeue
+                    # with rate limiting and let the next attempt succeed
+                    # once the cache has caught up with the API server.
+                    logger.debug('conflict, requeuing %r', request)
+                else:
+                    outcome = 'error'
+                    log.exception('error while processing request %r', request)
+                    # Unexpected error, log it and requeue with rate limiting.
+                    logger.debug('requeuing with rate limiting %r', request)
                 request.retries = await self.queue.num_requeues(request)
                 await self.queue.add_rate_limited(request)
             else:
