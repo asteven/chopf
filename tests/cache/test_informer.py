@@ -81,3 +81,25 @@ async def test_informer_delete_dispatches_delete_event(pod_factory):
         event = await rx.receive()
     assert isinstance(event, DeleteEvent)
     assert pod.metadata.name not in {obj.metadata.name for obj in store.list()}
+
+
+@pytest.mark.anyio
+async def test_informer_normalizes_metadata_before_store_and_dispatch(pod_factory):
+    store = Indexer()
+    informer = Informer(
+        api_client=object(), store=store, resource=Pod, namespace='default'
+    )
+    tx, rx = anyio.create_memory_object_stream(10)
+    informer.add_stream(tx)
+
+    pod = pod_factory('foo')
+    assert pod.metadata.annotations is None
+
+    await informer._process_event('LISTED', pod)
+
+    with anyio.fail_after(1):
+        event = await rx.receive()
+    assert event.obj.metadata.annotations == {}
+    assert event.obj.metadata.labels == {}
+    assert event.obj.metadata.finalizers == []
+    assert store.get(pod).metadata.annotations == {}

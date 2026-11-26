@@ -9,7 +9,7 @@ from lightkube.core.exceptions import ApiError
 from .controller import Request
 from .exceptions import ApiObjectNotFound
 from .observer import Observer
-from .resources import identity
+from .resources import identity, normalize_metadata
 
 __all__ = [
     'Client',
@@ -143,13 +143,14 @@ class AsyncClient(Client):
             )
         else:
             try:
-                return await self._observed(
+                result = await self._observed(
                     'get',
                     resource,
                     lambda: self.api_client.get(
                         resource, namespace=namespace, name=name
                     ),
                 )
+                return normalize_metadata(result)
             except ApiError as e:
                 raise ApiObjectNotFound(resource, name, namespace=namespace) from e
 
@@ -168,15 +169,17 @@ class AsyncClient(Client):
 
             async def _list():
                 return [
-                    obj
+                    normalize_metadata(obj)
                     async for obj in self.api_client.list(resource, namespace=namespace)
                 ]
 
             return await self._observed('list', resource, _list)
 
     async def create(self, resource):
-        result = await self._observed(
-            'create', resource, lambda: self.api_client.create(resource)
+        result = normalize_metadata(
+            await self._observed(
+                'create', resource, lambda: self.api_client.create(resource)
+            )
         )
         # TODO: is this sane? or to much magic?
         # If the resource has a Status sub resource also create it.
@@ -192,8 +195,10 @@ class AsyncClient(Client):
         return result
 
     async def update(self, resource):
-        result = await self._observed(
-            'update', resource, lambda: self.api_client.replace(resource)
+        result = normalize_metadata(
+            await self._observed(
+                'update', resource, lambda: self.api_client.replace(resource)
+            )
         )
         # TODO: is this sane? or to much magic?
         # Update the status subresouce if status has changed.
@@ -216,13 +221,14 @@ class AsyncClient(Client):
         )
         if obj is None and isinstance(request, lkr.Resource):
             obj = request
-        return await self._observed(
+        result = await self._observed(
             'patch',
             resource,
             lambda: self.api_client.patch(
                 resource, name=name, namespace=namespace, obj=obj
             ),
         )
+        return normalize_metadata(result)
 
     async def delete(self, request=None, *, resource=None, name=None, namespace=None):
         resource, name, namespace = self._get_resource_name_namespace(

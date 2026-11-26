@@ -2,6 +2,7 @@ from types import SimpleNamespace
 
 import anyio
 import pytest
+from lightkube.models.meta_v1 import ObjectMeta
 from lightkube.resources.core_v1 import Pod
 
 from chopf.client import AsyncClient, SyncClient
@@ -142,3 +143,33 @@ async def test_sync_client_delegates_kwargs(pod_resource):
 
     assert result == {'a': 1}
     assert api.patch_calls == [(Pod, 'pod', 'default', {'a': 1})]
+
+
+@pytest.mark.anyio
+async def test_async_client_normalizes_api_results():
+    pod = Pod(metadata=ObjectMeta(name='pod', namespace='default'))
+    pod.apiVersion = 'v1'
+    pod.kind = 'Pod'
+
+    cache = DummyCache()
+    api = DummyAsyncAPI()
+    api.get = lambda resource, namespace=None, name=None: _ret(pod)
+    api.create = lambda resource: _ret(pod)
+    api.replace = lambda resource: _ret(pod)
+    api.patch = lambda resource, name=None, namespace=None, obj=None: _ret(pod)
+
+    assert pod.metadata.annotations is None
+
+    client = AsyncClient(api, cache)
+    for result in (
+        await client.get(resource=Pod, name='pod', namespace='default'),
+        await client.create(pod),
+        await client.update(pod),
+        await client.patch(resource=Pod, name='pod', namespace='default', obj={'a': 1}),
+    ):
+        assert result.metadata.annotations == {}
+        assert result.metadata.labels == {}
+
+
+async def _ret(value):
+    return value

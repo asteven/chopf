@@ -9,6 +9,7 @@ from .resources import (
     ObjectMeta,
     PartialObjectMetadata,
     Resource,
+    normalize_metadata,
 )
 
 __all__ = [
@@ -19,6 +20,7 @@ __all__ = [
     'Resource',
     'crd',
     'custom_resource_registry',
+    'normalize_metadata',
 ]
 
 

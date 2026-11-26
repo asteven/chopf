@@ -11,6 +11,47 @@ class GroupVersion:
     version: str
 
 
+#: ObjectMeta fields normalized to usable empty defaults, mapped to a
+#: factory for their empty value. ``managedFields`` is deliberately
+#: excluded: operators never mutate it and it is often the largest field
+#: on an object, so materializing it would be pure waste.
+NORMALIZED_METADATA_FIELDS = {
+    'annotations': dict,
+    'labels': dict,
+    'finalizers': list,
+    'ownerReferences': list,
+}
+
+
+def normalize_metadata(obj):
+    """Give any resource usable defaults for commonly used ObjectMeta fields.
+
+    lightkube's built-in models decode absent collections as ``None``,
+    which forces operator authors to guard e.g. ``obj.metadata.annotations``
+    before every use. chopf's own :class:`ObjectMeta` already defaults these
+    fields via ``__post_init__``; this function applies the same sugar to
+    any resource, regardless of model class.
+
+    Note that the object no longer faithfully mirrors server state: the
+    normalized fields are re-encoded as empty maps/lists on update. That
+    is benign — kubernetes treats empty maps as absent — and matches the
+    semantics chopf's ObjectMeta has always had.
+    """
+    metadata = getattr(obj, 'metadata', None)
+    if metadata is None:
+        return obj
+    if isinstance(metadata, dict):
+        # Dict-backed generic resources.
+        for field, default_factory in NORMALIZED_METADATA_FIELDS.items():
+            if metadata.get(field) is None:
+                metadata[field] = default_factory()
+        return obj
+    for field, default_factory in NORMALIZED_METADATA_FIELDS.items():
+        if getattr(metadata, field, None) is None:
+            setattr(metadata, field, default_factory())
+    return obj
+
+
 class ObjectMeta(meta_v1.ObjectMeta):
     """ObjectMeta with usable defaults for commonly mutated nested structures.
 
@@ -21,16 +62,9 @@ class ObjectMeta(meta_v1.ObjectMeta):
 
     def __post_init__(self):
         # Set defaults for commonly used nested data structures.
-        if self.annotations is None:
-            self.annotations = {}
-        if self.finalizers is None:
-            self.finalizers = []
-        if self.labels is None:
-            self.labels = {}
-        if self.managedFields is None:
-            self.managedFields = []
-        if self.ownerReferences is None:
-            self.ownerReferences = []
+        for field, default_factory in NORMALIZED_METADATA_FIELDS.items():
+            if getattr(self, field) is None:
+                setattr(self, field, default_factory())
 
 
 class Resource:

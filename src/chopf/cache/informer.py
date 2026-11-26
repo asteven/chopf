@@ -11,7 +11,7 @@ from anyio.abc import TaskStatus
 from lightkube.core import resource as lkr
 
 from ..observer import Observer
-from ..resources import identity, is_same_version
+from ..resources import identity, is_same_version, normalize_metadata
 from ..tasks import Task
 from . import CreateEvent, DeleteEvent, UpdateEvent
 
@@ -255,6 +255,10 @@ class Informer(Task):
         # print(f'_process_event: {event} {obj}')
         if callable(self.transformer):
             obj = self.transformer(obj)
+        # Give built-in lightkube resources the same ObjectMeta sugar that
+        # chopf's own ObjectMeta provides, before objects reach the store,
+        # predicates or reconcile handlers.
+        obj = normalize_metadata(obj)
         match event:
             case 'ADDED' | 'LISTED' | 'MODIFIED':
                 await self._add_or_update(obj)
